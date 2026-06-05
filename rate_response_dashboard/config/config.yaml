@@ -1,0 +1,92 @@
+# All paths and behavior knobs live here. Keep code path-free.
+
+paths:
+  # Path the SAS server writes exp_<MMMYY>_rollup.csv to. On the company server
+  # SAS uses Unix path; Python typically sees it through a UNC mount or a sync.
+  # If the Python box is the same server, keep them identical. Otherwise, set
+  # sas_export_dir to the Unix path SAS writes and rollup_csv_dir to where
+  # Python reads (could be a network mirror).
+  sas_export_dir: "/sasdata/windows/fnbmcorp/Risk/Modeling/Model Development/Vendor Engagements/Active/01 - Adhoc/2026Q2_RR_Anlaysis/FilterCRS"
+  rollup_csv_dir: "./data/rollup_csv"
+  mart_dir: "./data/mart/rate_response_rollup"
+  logs_dir: "./data/logs"
+  sas_pipeline_file: "./sas/rate_response_pipeline.sas"
+
+# SAS Agora connector wrapper. The actual import path lives in src/sas_runner.py
+# because it depends on the company library; we only carry behavior knobs here.
+sas:
+  trm_libname: "trm"
+  trm_libpath: "/sasdata/area51/group/RISK_MODELING/TRM/Analysis2026Q2"
+  # The &folder. macro var the SAS pipeline expects (so we don't hardcode it
+  # inside the .sas file).
+  export_folder_macrovar: "/sasdata/windows/fnbmcorp/Risk/Modeling/Model Development/Vendor Engagements/Active/01 - Adhoc/2026Q2_RR_Anlaysis/FilterCRS"
+
+refresh:
+  # Recent months always re-pulled because response/board are still maturing.
+  recent_refresh_window_months: 3
+  # Hard cutoff: do not auto-refresh anything older than this.
+  history_freeze_months: 24
+
+mart:
+  # Columns the rollup CSV must have for the partition to be accepted.
+  required_columns:
+    - Prospect_type
+    - pqabandon_flag
+    - prchargeoff_flag
+    - prclosure_flag
+    - prdecline_flag
+    - vs_band
+    - annual_fee
+    - times_mailed_12mo_cnt
+    - trm10_tier
+    - scorecard
+    - rm_flag
+    - volume
+    - responders
+    - expected_responses
+    - expected_responses_xpm
+    - Boards
+
+  # SAS-side rate columns we intentionally DROP at ingest time so dashboard
+  # cannot accidentally average them. Rates must be recomputed from sums.
+  drop_precomputed_rate_columns:
+    - GRR
+    - NRR
+
+dashboard:
+  title: "Rate Response Dashboard"
+  # Suppress cells where volume < this. Set to 0 to disable.
+  small_cell_threshold: 100
+  # Default dimensions/metrics shown in pivot tab.
+  default_row_dim: "vs_band"
+  default_metric: "actual_response_rate"
+
+# Catalog of dimensions and metrics exposed in the UI. Order matters.
+catalog:
+  dimensions:
+    - vs_band
+    - scorecard
+    - Prospect_type
+    - rm_flag
+    - trm10_tier
+    - annual_fee
+    - times_mailed_12mo_cnt
+    - pqabandon_flag
+    - prchargeoff_flag
+    - prclosure_flag
+    - prdecline_flag
+
+  metrics:
+    - volume
+    - responders
+    - Boards
+    - actual_response_rate
+    - expected_rr_trm
+    - expected_rr_xpm
+    - actual_vs_expected_trm
+    - actual_vs_expected_xpm
+    - board_rate
+
+logging:
+  level: "INFO"
+  file: "./data/logs/app.log"
