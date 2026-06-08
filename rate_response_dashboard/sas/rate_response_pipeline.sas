@@ -1,12 +1,3 @@
-* rate_response_pipeline.sas;
-* Pure macro definitions lifted from saspull2.0.ipynb. ;
-* This file defines macros only; the Python orchestrator drives execution. ;
-* Macros defined here: readmailfile_trm, getresponse_trm, finalresponse_trm, ;
-*   assign_psi_tier, rollup, run_one_month, run_months. ;
-* The Python orchestrator assigns &folder and the trm libname before this file ;
-*   is submitted, then calls %run_one_month or %run_months. ;
-* See README.md for the list of known SAS-side caveats from the original notebook. ;
-
 /**********************************Macro 1.1 - Step1: Read Mailfile Macro*********************************/
 %macro readmailfile_trm(startdate,ds);
 
