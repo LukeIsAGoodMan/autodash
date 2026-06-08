@@ -115,18 +115,37 @@ class SASRunner:
                  min(n, len(lines)), tail)
 
     def _check_for_errors(self, log_text: str, log_file: Path, label: str) -> None:
-        """Raise SASError if the log contains any ERROR: lines."""
-        matches = _ERROR_LINE.findall(log_text or "")
-        if not matches:
+        """Raise SASError if the log contains any ERROR: lines.
+
+        Prints up to CONTEXT_BEFORE lines BEFORE each ERROR and CONTEXT_AFTER
+        lines AFTER, with global log line numbers, so the offending statement
+        is visible without re-opening the .log file.
+        """
+        CONTEXT_BEFORE = 30
+        CONTEXT_AFTER = 5
+
+        lines = (log_text or "").splitlines()
+        err_idx = [i for i, ln in enumerate(lines) if _ERROR_LINE.match(ln)]
+        if not err_idx:
             return
-        # Pull the actual error lines for the message.
-        err_lines = [ln for ln in (log_text or "").splitlines()
-                     if _ERROR_LINE.match(ln)]
-        sample = "\n  ".join(err_lines[:5])
+
+        chunks = []
+        for i in err_idx[:5]:  # first 5 ERRORs is plenty for diagnosis
+            start = max(0, i - CONTEXT_BEFORE)
+            end = min(len(lines), i + 1 + CONTEXT_AFTER)
+            numbered = []
+            for j in range(start, end):
+                marker = ">>" if j == i else "  "
+                numbered.append(f"  {marker} {j+1:5d} | {lines[j]}")
+            chunks.append(
+                f"--- ERROR at log line {i+1} (context {start+1}-{end}) ---\n"
+                + "\n".join(numbered)
+            )
+
         msg = (
-            f"SAS submit [{label}] failed: {len(err_lines)} ERROR line(s).\n"
-            f"  First lines:\n  {sample}\n"
-            f"  Full log: {log_file}"
+            f"SAS submit [{label}] failed: {len(err_idx)} ERROR line(s).\n"
+            + "\n\n".join(chunks)
+            + f"\n\nFull log: {log_file}"
         )
         raise SASError(msg)
 
