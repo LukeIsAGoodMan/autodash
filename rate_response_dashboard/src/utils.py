@@ -44,6 +44,16 @@ class CampaignMonth:
         """e.g. '01JAN2025' — matches SAS date9. for %run_one_month."""
         return f"01{_MONTH_NUM_TO_ABBR[self.month]}{self.year:04d}"
 
+    @property
+    def rollup_table_name(self) -> str:
+        """e.g. 'JAN25_rollup' — name of the SAS WORK table the rollup macro builds."""
+        return f"{self.sas_label}_rollup"
+
+    @property
+    def rollup_filename(self) -> str:
+        """e.g. 'exp_JAN25_rollup.csv' — filename SAS proc export writes."""
+        return f"exp_{self.sas_label}_rollup.csv"
+
 
 def parse_rollup_filename(name: str) -> CampaignMonth | None:
     """Parse 'exp_JAN25_rollup.csv' → CampaignMonth(2025, 1). None if no match.

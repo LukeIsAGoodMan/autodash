@@ -1,40 +1,52 @@
 """Thin wrapper around the company's C1BConnections / saspy submission flow.
 
-We deliberately keep this layer minimal. SAS remains the trusted data engine;
-this module only orchestrates connect → submit(%include) → submit(%run_*) →
-optionally sd2df → disconnect.
+Contract:
+  - Do NOT %include any local file. SAS server may be on Unix and cannot
+    read C:\\Users\\... paths. We always submit the .sas content inline.
+  - Every submit saves the full LOG under data/logs/sas_<ts>_<label>.log.
+  - Every submit scans the LOG for lines starting with 'ERROR' and raises
+    SASError on the first hit. The pipeline stops; we do NOT ingest after
+    a SAS error.
+  - After priming we verify the critical macros compiled via %sysmacexist.
 
 Three public entrypoints:
-    run_sas_pipeline(start_month, end_month) -> SAS log
-    run_one_month_sas(campaign_month)        -> SAS log
+    run_sas_pipeline(start_month, end_month) -> SAS log dict
+    run_one_month_sas(campaign_month)        -> SAS log dict
     pull_sas_table(table_name, libref='WORK')-> pandas.DataFrame
-
-Both pipeline entrypoints expect strings in 'YYYY-MM' form. They translate to
-SAS date9. (e.g. '01JAN2025') before invoking the macros, so the caller never
-has to think about SAS date formats.
 """
 from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
 import pandas as pd
 
-from .utils import CampaignMonth, iso_to_campaign_month, load_config
+from .utils import CampaignMonth, ensure_dir, iso_to_campaign_month, load_config
 
 log = logging.getLogger(__name__)
 
+# Match SAS error lines. Standard SAS log uses 'ERROR:' or 'ERROR <num>-<num>:'.
+_ERROR_LINE = re.compile(r"^ERROR(\s+\d+-\d+)?:", re.MULTILINE)
+
+# Macros we require for the pipeline to be runnable.
+_REQUIRED_MACROS = [
+    "run_one_month", "run_months", "rollup",
+    "readmailfile_trm", "getresponse_trm", "finalresponse_trm",
+]
+
+
+class SASError(RuntimeError):
+    """Raised when SAS log contains ERROR lines or required macros are missing."""
+
 
 def _import_agora():
-    """Lazy import so dev machines without Agora can still load the package.
-
-    The exact sys.path append is preserved from the notebook so we do not
-    perturb the company SAS connector contract.
-    """
+    """Lazy import so dev machines without Agora can still load the package."""
     sys.path.append(
         fr"C:\Users\{os.getlogin()}\88c6afda0b696ca552ccd7000b7ae067\RFS-MAP\SAS-DATA-PULL"
     )
@@ -52,6 +64,16 @@ class SASRunner:
         self.trm_libname = cfg["sas"]["trm_libname"]
         self.trm_libpath = cfg["sas"]["trm_libpath"]
         self.export_folder = cfg["sas"]["export_folder_macrovar"]
+        self.logs_dir = Path(cfg["paths"]["logs_dir"]).resolve()
+        ensure_dir(self.logs_dir)
+
+        # Read the .sas content ONCE at construction. If the file is missing
+        # we fail before opening the SAS connection.
+        if not self.pipeline_file.exists():
+            raise FileNotFoundError(f"SAS pipeline file not found: {self.pipeline_file}")
+        self._sas_macro_text = self.pipeline_file.read_text(encoding="utf-8")
+        log.info("Loaded SAS pipeline from %s (%d chars)",
+                 self.pipeline_file, len(self._sas_macro_text))
 
     # ------------------------------------------------------------------ lifecycle
     def connect(self) -> None:
@@ -60,6 +82,7 @@ class SASRunner:
         self.cnx.connect_to_SAS()
         log.info("SAS connection established")
         self._prime_environment()
+        self._verify_macros_compiled()
 
     def disconnect(self) -> None:
         if self.cnx is not None:
@@ -77,47 +100,117 @@ class SASRunner:
         self.disconnect()
 
     # ------------------------------------------------------------------ private
-    def _submit(self, code: str) -> dict:
+    def _save_log(self, log_text: str, label: str) -> Path:
+        """Persist the full SAS LOG to disk and return the path."""
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = self.logs_dir / f"sas_{ts}_{label}.log"
+        path.write_text(log_text or "", encoding="utf-8")
+        return path
+
+    def _print_tail(self, log_text: str, n: int = 200) -> None:
+        """Print last n lines of SAS log to the Python logger (and stdout)."""
+        lines = (log_text or "").splitlines()
+        tail = "\n".join(lines[-n:])
+        log.info("---- SAS LOG TAIL (last %d lines) ----\n%s\n---- END SAS LOG TAIL ----",
+                 min(n, len(lines)), tail)
+
+    def _check_for_errors(self, log_text: str, log_file: Path, label: str) -> None:
+        """Raise SASError if the log contains any ERROR: lines."""
+        matches = _ERROR_LINE.findall(log_text or "")
+        if not matches:
+            return
+        # Pull the actual error lines for the message.
+        err_lines = [ln for ln in (log_text or "").splitlines()
+                     if _ERROR_LINE.match(ln)]
+        sample = "\n  ".join(err_lines[:5])
+        msg = (
+            f"SAS submit [{label}] failed: {len(err_lines)} ERROR line(s).\n"
+            f"  First lines:\n  {sample}\n"
+            f"  Full log: {log_file}"
+        )
+        raise SASError(msg)
+
+    def _submit(self, code: str, label: str = "submit") -> dict:
+        """Submit SAS code, persist log, print tail, raise on ERROR."""
         if self.cnx is None:
             raise RuntimeError("SAS not connected. Call connect() first.")
-        result = self.cnx.SAS_Connection.submit(code)
-        # The Agora submit() returns a dict {'LOG': ..., 'LST': ...}. Tail the
-        # log into Python's logger so failures are visible without opening SAS.
-        log.debug("SAS LOG tail:\n%s", (result.get("LOG", "") or "")[-2000:])
+        log.info("Submitting SAS code [%s] (%d chars)", label, len(code))
+        result = self.cnx.SAS_Connection.submit(code) or {}
+        log_text = result.get("LOG", "") or ""
+        log_file = self._save_log(log_text, label)
+        log.info("SAS log saved: %s", log_file)
+        self._print_tail(log_text)
+        self._check_for_errors(log_text, log_file, label)
         return result
 
     def _prime_environment(self) -> None:
-        """Assign trm libname, set &folder, and %include the macro file."""
-        pipeline = str(self.pipeline_file).replace("\\", "/")
-        prelude = f"""
-            libname {self.trm_libname} '{self.trm_libpath}';
-            %let folder = {self.export_folder};
-            %include "{pipeline}";
+        """Assign trm libname, set &folder, and inline the macro file content.
+
+        We deliberately do NOT use %include here. The SAS session may be on a
+        Unix server that cannot read C:\\Users\\... paths from the Python box.
         """
-        self._submit(prelude)
-        log.info("SAS environment primed (libname + %%include)")
+        prelude = (
+            f"libname {self.trm_libname} '{self.trm_libpath}';\n"
+            f"%let folder = {self.export_folder};\n"
+        )
+        # Inline the .sas content so the SAS server compiles macros from text,
+        # not from a file path it cannot reach.
+        self._submit(prelude + self._sas_macro_text, label="prime")
+        log.info("SAS environment primed (libname + macro defs inlined)")
+
+    def _verify_macros_compiled(self) -> None:
+        """Probe %sysmacexist for the macros we will call."""
+        puts = "\n".join(
+            f"%put MACRO_CHECK {m}=%sysmacexist({m});" for m in _REQUIRED_MACROS
+        )
+        result = self._submit(
+            f"%put MACRO_CHECK_BEGIN;\n{puts}\n%put MACRO_CHECK_END;",
+            label="macro_check",
+        )
+        log_text = result.get("LOG", "") or ""
+        missing = []
+        for m in _REQUIRED_MACROS:
+            if f"MACRO_CHECK {m}=1" not in log_text:
+                missing.append(m)
+        if missing:
+            raise SASError(
+                f"Required SAS macros not compiled: {missing}. "
+                f"This usually means the macro defs in {self.pipeline_file} have "
+                f"a SAS syntax error. Check the latest data/logs/sas_*_prime.log."
+            )
+        log.info("Macro compile check passed for: %s", _REQUIRED_MACROS)
 
     # ------------------------------------------------------------------ public API
     def run_sas_pipeline(self, start_month: str, end_month: str) -> dict:
         """Run %run_months over [start_month, end_month], both 'YYYY-MM'."""
-        s = iso_to_campaign_month(start_month).sas_reportdate
-        e = iso_to_campaign_month(end_month).sas_reportdate
-        log.info("Submitting %%run_months(start=%s, end=%s)", s, e)
-        return self._submit(f"%run_months(start={s}, end={e});")
+        s_cm = iso_to_campaign_month(start_month)
+        e_cm = iso_to_campaign_month(end_month)
+        log.info(
+            "run_sas_pipeline: start=%s (sas=%s) end=%s (sas=%s)",
+            start_month, s_cm.sas_reportdate, end_month, e_cm.sas_reportdate,
+        )
+        return self._submit(
+            f"%run_months(start={s_cm.sas_reportdate}, end={e_cm.sas_reportdate});",
+            label=f"run_months_{start_month}_to_{end_month}",
+        )
 
     def run_one_month_sas(self, campaign_month: str) -> dict:
         """Run %run_one_month for a single 'YYYY-MM'."""
         cm = iso_to_campaign_month(campaign_month)
-        log.info("Submitting %%run_one_month(%s)", cm.sas_reportdate)
-        return self._submit(f"%run_one_month({cm.sas_reportdate});")
+        expected_csv = cm.rollup_filename
+        log.info(
+            "run_one_month_sas: month=%s sas_reportdate=%s sas_label=%s "
+            "expected_table=%s expected_csv=%s export_folder=%s",
+            campaign_month, cm.sas_reportdate, cm.sas_label,
+            f"{cm.sas_label}_rollup", expected_csv, self.export_folder,
+        )
+        return self._submit(
+            f"%run_one_month({cm.sas_reportdate});",
+            label=f"run_one_month_{campaign_month}",
+        )
 
     def pull_sas_table(self, table_name: str, libref: str = "WORK") -> pd.DataFrame:
-        """Pull a SAS table into a pandas DataFrame.
-
-        Intended for small/aggregated tables (rollups). DO NOT use on
-        customer-level mailfile or finalresponse — those are 20M rows and
-        contain PII.
-        """
+        """Pull a SAS table into a pandas DataFrame."""
         if self.cnx is None:
             raise RuntimeError("SAS not connected. Call connect() first.")
         log.info("sd2df(table=%s, libref=%s)", table_name, libref)

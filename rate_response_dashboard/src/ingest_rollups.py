@@ -67,11 +67,31 @@ def _is_recent(cm: CampaignMonth, refresh_window_months: int) -> bool:
 
 
 def plan_ingestion(cfg: dict) -> list[IngestPlan]:
-    """Build the plan without touching the mart."""
+    """Build the plan without touching the mart.
+
+    Prints (at INFO) the directory being scanned, whether it exists, and
+    every file in it. This is the diagnostic surface for "0 files" issues.
+    """
     csv_dir = Path(cfg["paths"]["rollup_csv_dir"])
     mart_dir = Path(cfg["paths"]["mart_dir"])
     refresh_window = cfg["refresh"]["recent_refresh_window_months"]
     freeze_months = cfg["refresh"]["history_freeze_months"]
+
+    log.info("Scanning rollup_csv_dir = %s", csv_dir)
+    log.info("Directory exists       = %s", csv_dir.exists())
+    if csv_dir.exists():
+        all_files = sorted(p.name for p in csv_dir.iterdir() if p.is_file())
+        log.info("Files present (%d total): %s",
+                 len(all_files),
+                 all_files if len(all_files) <= 50 else all_files[:50] + ["..."])
+    else:
+        log.error(
+            "rollup_csv_dir does not exist: %s. "
+            "Check config.paths.rollup_csv_dir matches the SAS &folder. macro "
+            "(config.sas.export_folder_macrovar = %s).",
+            csv_dir, cfg["sas"]["export_folder_macrovar"],
+        )
+        return []
 
     today = datetime.today()
     plans: list[IngestPlan] = []
@@ -200,9 +220,35 @@ def execute_plan(plan: list[IngestPlan], cfg: dict) -> dict:
     return summary
 
 
-def run_ingest(cfg: dict) -> dict:
-    """One-call entrypoint used by scripts."""
+def run_ingest(cfg: dict, expected_months: list[str] | None = None) -> dict:
+    """One-call entrypoint used by scripts.
+
+    If `expected_months` is provided (list of 'YYYY-MM'), we additionally check
+    that each is present in the plan with action add/replace. Months that
+    appear nowhere in the plan are reported as 'missing_csv' so the caller
+    can fail fast.
+    """
     plan = plan_ingestion(cfg)
     log.info("ingest plan: %d files (%s)", len(plan),
              ", ".join(f"{p.cm.iso}:{p.action}" for p in plan))
-    return execute_plan(plan, cfg)
+
+    if not plan:
+        log.warning(
+            "No rollup CSV files found in %s. "
+            "Check SAS export path and SAS log under %s/sas_*.log.",
+            cfg["paths"]["rollup_csv_dir"], cfg["paths"]["logs_dir"],
+        )
+
+    summary = execute_plan(plan, cfg)
+
+    if expected_months:
+        found_months = {p.cm.iso for p in plan}
+        missing = [m for m in expected_months if m not in found_months]
+        summary["missing_csv"] = missing
+        if missing:
+            log.error(
+                "Expected rollup CSVs not found for months: %s. "
+                "Confirm SAS proc export wrote exp_<MMMYY>_rollup.csv to %s.",
+                missing, cfg["paths"]["rollup_csv_dir"],
+            )
+    return summary

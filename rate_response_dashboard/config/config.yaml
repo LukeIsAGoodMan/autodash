@@ -1,13 +1,13 @@
 # All paths and behavior knobs live here. Keep code path-free.
 
 paths:
-  # Path the SAS server writes exp_<MMMYY>_rollup.csv to. On the company server
-  # SAS uses Unix path; Python typically sees it through a UNC mount or a sync.
-  # If the Python box is the same server, keep them identical. Otherwise, set
-  # sas_export_dir to the Unix path SAS writes and rollup_csv_dir to where
-  # Python reads (could be a network mirror).
+  # The folder SAS writes exp_<MMMYY>_rollup.csv to via proc export.
+  # This is the &folder. macro variable handed to the SAS session.
   sas_export_dir: "/sasdata/windows/fnbmcorp/Risk/Modeling/Model Development/Vendor Engagements/Active/01 - Adhoc/2026Q2_RR_Anlaysis/FilterCRS"
-  rollup_csv_dir: "./data/rollup_csv"
+  # Folder Python scans for exp_*_rollup.csv. By default this is the SAME
+  # place SAS writes to (notebook's original setup). Change only if Python
+  # runs on a different box that mounts the SAS folder under a different name.
+  rollup_csv_dir: "/sasdata/windows/fnbmcorp/Risk/Modeling/Model Development/Vendor Engagements/Active/01 - Adhoc/2026Q2_RR_Anlaysis/FilterCRS"
   mart_dir: "./data/mart/rate_response_rollup"
   logs_dir: "./data/logs"
   sas_pipeline_file: "./sas/rate_response_pipeline.sas"
