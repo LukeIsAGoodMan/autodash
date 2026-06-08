@@ -126,24 +126,55 @@ def plan_ingestion(cfg: dict) -> list[IngestPlan]:
 
 # ----------------------------------------------------------- execution
 def _load_csv(path: Path) -> pl.DataFrame:
-    """Read a SAS-exported rollup CSV with permissive typing.
+    """Read a SAS-exported rollup CSV with permissive typing."""
+    df = pl.read_csv(str(path), infer_schema_length=10_000)
+    log.info("loaded %s: %d rows, columns=%s", path.name, df.height, df.columns)
+    return df
 
-    SAS's dbms=csv export tends to emit numbers as numerics already, but
-    integer flags may come through as floats. We accept whatever comes and
-    rely on the validation step to bounce malformed files.
+
+def _canonicalize_columns(df: pl.DataFrame, canonical_names: list[str]) -> pl.DataFrame:
+    """Case-insensitively rename CSV columns to canonical names from config.
+
+    SAS proc export emits column names in whatever case the underlying SAS
+    dataset stored — frequently UPPERCASE for variables sourced from
+    datalake.experianprescreen and lowercase for variables created in a SQL
+    SELECT. Our config uses one fixed canonical case per column; this
+    function bridges the gap so validation does not reject files that have
+    the data but the wrong case.
     """
-    return pl.read_csv(str(path), infer_schema_length=10_000)
+    lower_to_actual = {c.lower(): c for c in df.columns}
+    rename_map: dict[str, str] = {}
+    for canonical in canonical_names:
+        key = canonical.lower()
+        actual = lower_to_actual.get(key)
+        if actual is None or actual == canonical:
+            continue
+        rename_map[actual] = canonical
+    if rename_map:
+        log.info("canonicalizing column case: %s", rename_map)
+        df = df.rename(rename_map)
+    return df
 
 
 def _prepare_for_mart(df: pl.DataFrame, cm: CampaignMonth, cfg: dict) -> pl.DataFrame:
     """Normalize the frame before writing.
 
-    Four transforms only:
+    Five transforms only:
+      0. canonicalize column case (handle SAS proc export quirks)
       1. drop SAS precomputed rate columns (force dashboard to recompute)
       2. backfill optional columns the CSV is missing (e.g. expected_responses_xpm)
       3. attach campaign_month as a string column
       4. coerce flag columns to Int32 if they exist
     """
+    # 0. case canonicalization: collect every known canonical name from config
+    #    and rename any case-variant present in the CSV.
+    canonical: set[str] = set()
+    canonical.update(cfg["mart"]["required_columns"])
+    canonical.update((cfg["mart"].get("optional_columns") or {}).keys())
+    canonical.update(cfg["mart"].get("drop_precomputed_rate_columns") or [])
+    canonical.update(cfg.get("catalog", {}).get("dimensions") or [])
+    df = _canonicalize_columns(df, sorted(canonical))
+
     drop_cols = [c for c in cfg["mart"]["drop_precomputed_rate_columns"] if c in df.columns]
     if drop_cols:
         df = df.drop(drop_cols)
