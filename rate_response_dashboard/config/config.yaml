@@ -29,7 +29,7 @@ refresh:
   history_freeze_months: 24
 
 mart:
-  # Columns the rollup CSV must have for the partition to be accepted.
+  # Columns the rollup CSV MUST have for the partition to be accepted.
   required_columns:
     - Prospect_type
     - pqabandon_flag
@@ -45,8 +45,20 @@ mart:
     - volume
     - responders
     - expected_responses
-    - expected_responses_xpm
     - Boards
+
+  # Columns that MAY be missing from the rollup CSV. If absent, Python fills
+  # the column with the specified default at ingest time. Dashboard metrics
+  # that depend on these columns will then show null (—) for those months.
+  #
+  # expected_responses_xpm is here because the current SAS pipeline references
+  # sum(EXP_RESPONSE_SCORE) but EXP_RESPONSE_SCORE is not in the
+  # readmailfile_trm keep= list, so proc export silently drops the column.
+  # Until SAS sources EXP_RESPONSE_SCORE, expected_rr_xpm and
+  # actual_vs_expected_xpm will be unreliable for affected months. See the
+  # has_xpm column in validation_summary.csv / Data Quality tab.
+  optional_columns:
+    expected_responses_xpm: null
 
   # SAS-side rate columns we intentionally DROP at ingest time so dashboard
   # cannot accidentally average them. Rates must be recomputed from sums.

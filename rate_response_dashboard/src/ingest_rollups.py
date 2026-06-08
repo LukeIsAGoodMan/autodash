@@ -138,14 +138,28 @@ def _load_csv(path: Path) -> pl.DataFrame:
 def _prepare_for_mart(df: pl.DataFrame, cm: CampaignMonth, cfg: dict) -> pl.DataFrame:
     """Normalize the frame before writing.
 
-    Three transforms only:
+    Four transforms only:
       1. drop SAS precomputed rate columns (force dashboard to recompute)
-      2. attach campaign_month as a string column
-      3. coerce flag columns to Int32 if they exist
+      2. backfill optional columns the CSV is missing (e.g. expected_responses_xpm)
+      3. attach campaign_month as a string column
+      4. coerce flag columns to Int32 if they exist
     """
     drop_cols = [c for c in cfg["mart"]["drop_precomputed_rate_columns"] if c in df.columns]
     if drop_cols:
         df = df.drop(drop_cols)
+
+    # Backfill optional columns. If the CSV doesn't have it, add it with the
+    # configured default (typically null) so downstream code can safely
+    # reference the column. The polars dtype defaults to Float64 for null
+    # literals; cast explicitly so sums don't surprise us.
+    optional_cols = cfg["mart"].get("optional_columns") or {}
+    for col, default in optional_cols.items():
+        if col not in df.columns:
+            df = df.with_columns(
+                pl.lit(default, dtype=pl.Float64).alias(col)
+            )
+            log.info("partition %s: optional column %r missing in CSV, "
+                     "filled with default=%r", cm.iso, col, default)
 
     df = df.with_columns(pl.lit(cm.iso).alias("campaign_month"))
 

@@ -244,11 +244,11 @@ quit;
     %readmailfile_trm(&startdate., &labelname.);
     %getresponse_trm(&startdate., &labelname.);
     %finalresponse_trm(&startdate., &labelname.);
-    %rollup(&startdate., &labelname.);
     data trm.&labelname._finalresponse;
         set &labelname._finalresponse;
         %assign_psi_tier;
     run;
+    %rollup(&startdate., &labelname.);
     proc export data=&labelname._rollup
         outfile="&folder./exp_&labelname._rollup.csv"
         dbms=csv

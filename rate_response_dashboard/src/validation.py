@@ -170,6 +170,10 @@ def rebuild_validation_summary(mart_dir: str | Path, out_path: str | Path) -> No
 
     This is the truth file (load_log is the history). The dashboard's Data
     Quality tab prefers this over load_log when both exist.
+
+    A `has_xpm` boolean column is included so the DQ tab can flag months
+    whose expected_rr_xpm and actual_vs_expected_xpm are unreliable (because
+    the SAS pipeline didn't source EXP_RESPONSE_SCORE).
     """
     mart_dir = Path(mart_dir)
     rows = []
@@ -178,13 +182,27 @@ def rebuild_validation_summary(mart_dir: str | Path, out_path: str | Path) -> No
         if not pq.exists():
             continue
         df = pl.read_parquet(pq)
-        totals = df.select(
+
+        # Base totals (xpm column may or may not have real values).
+        agg_exprs = [
             pl.col("volume").sum().alias("v"),
             pl.col("responders").sum().alias("r"),
             pl.col("Boards").sum().alias("b"),
             pl.col("expected_responses").sum().alias("et"),
-            pl.col("expected_responses_xpm").sum().alias("ex"),
-        ).row(0, named=True)
+        ]
+        if "expected_responses_xpm" in df.columns:
+            agg_exprs.append(pl.col("expected_responses_xpm").sum().alias("ex"))
+            agg_exprs.append(
+                pl.col("expected_responses_xpm").is_not_null().sum().alias("xpm_nn")
+            )
+        totals = df.select(agg_exprs).row(0, named=True)
+
+        ex = totals.get("ex")
+        xpm_nn = totals.get("xpm_nn", 0) or 0
+        # 'has_xpm' is true only if at least one row carries a real value AND
+        # the total is non-zero. All-null or all-zero is treated as missing.
+        has_xpm = bool(xpm_nn) and ex is not None and ex != 0
+
         rows.append({
             "campaign_month": part.name.split("=", 1)[1],
             "partition_path": str(part),
@@ -193,7 +211,8 @@ def rebuild_validation_summary(mart_dir: str | Path, out_path: str | Path) -> No
             "total_responders": totals["r"],
             "total_boards": totals["b"],
             "total_expected_responses": totals["et"],
-            "total_expected_responses_xpm": totals["ex"],
+            "total_expected_responses_xpm": ex,
+            "has_xpm": has_xpm,
         })
     if not rows:
         log.warning("No mart partitions found at %s", mart_dir)
