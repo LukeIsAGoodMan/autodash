@@ -1,27 +1,11 @@
-/* ============================================================================
-   rate_response_pipeline.sas
-
-   Pure macro definitions lifted verbatim from saspull2.0.ipynb.
-   This file does NOT execute anything by itself. It only defines:
-     %readmailfile_trm   %getresponse_trm   %finalresponse_trm
-     %assign_psi_tier    %rollup
-     %append_prescreen_premier   %feature_engg   %trm_sc2trans
-     %run_one_month      %run_months
-
-   The Python orchestrator (src/sas_runner.py) is responsible for:
-     - assigning &folder and the trm libname BEFORE %include of this file
-     - then calling %run_one_month(...) or %run_months(start=, end=)
-
-   KNOWN ISSUES carried over from the notebook (do NOT silently fix):
-     1. %finalresponse_trm contains nested block comments. SAS does not
-        natively support nested /* */ comments. Behavior is brittle.
-     2. %rollup reads from trm.&ds._finalresponse, but %run_one_month
-        creates trm.&labelname._finalresponse AFTER calling %rollup.
-        For a brand-new month this means %rollup sees no data
-        (or reads a stale prior table). Confirm intent with the analyst.
-     3. expected_responses_xpm = sum(EXP_RESPONSE_SCORE). EXP_RESPONSE_SCORE
-        is not in the readmailfile_trm keep= list. Confirm where it is sourced.
-   ============================================================================ */
+* rate_response_pipeline.sas;
+* Pure macro definitions lifted from saspull2.0.ipynb. ;
+* This file defines macros only; the Python orchestrator drives execution. ;
+* Macros defined here: readmailfile_trm, getresponse_trm, finalresponse_trm, ;
+*   assign_psi_tier, rollup, run_one_month, run_months. ;
+* The Python orchestrator assigns &folder and the trm libname before this file ;
+*   is submitted, then calls %run_one_month or %run_months. ;
+* See README.md for the list of known SAS-side caveats from the original notebook. ;
 
 /**********************************Macro 1.1 - Step1: Read Mailfile Macro*********************************/
 %macro readmailfile_trm(startdate,ds);
