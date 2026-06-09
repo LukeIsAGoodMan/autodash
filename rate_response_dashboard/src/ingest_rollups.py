@@ -66,11 +66,15 @@ def _is_recent(cm: CampaignMonth, refresh_window_months: int) -> bool:
     return 0 <= months_ago < refresh_window_months
 
 
-def plan_ingestion(cfg: dict) -> list[IngestPlan]:
+def plan_ingestion(cfg: dict, force: bool = False) -> list[IngestPlan]:
     """Build the plan without touching the mart.
 
     Prints (at INFO) the directory being scanned, whether it exists, and
     every file in it. This is the diagnostic surface for "0 files" issues.
+
+    If `force` is True, every parseable CSV becomes a replace action,
+    bypassing the mtime / refresh-window heuristics. Use for re-ingesting
+    after a schema change in ingest_rollups.
     """
     csv_dir = Path(cfg["paths"]["rollup_csv_dir"])
     mart_dir = Path(cfg["paths"]["mart_dir"])
@@ -110,7 +114,9 @@ def plan_ingestion(cfg: dict) -> list[IngestPlan]:
         csv_mtime = datetime.fromtimestamp(path.stat().st_mtime)
         part_mtime = _partition_mtime(mart_dir, cm)
 
-        if part_mtime is None:
+        if force and part_mtime is not None:
+            action, reason = "replace", "forced re-ingest (--force)"
+        elif part_mtime is None:
             action, reason = "add", "new month — no existing partition"
         elif csv_mtime > part_mtime:
             action, reason = "replace", f"csv newer than partition ({csv_mtime} > {part_mtime})"
@@ -192,6 +198,20 @@ def _prepare_for_mart(df: pl.DataFrame, cm: CampaignMonth, cfg: dict) -> pl.Data
             log.info("partition %s: optional column %r missing in CSV, "
                      "filled with default=%r", cm.iso, col, default)
 
+    # vs_band normalization: SAS produces blanks when vantage3 is null or
+    # below 530. Per analyst direction, treat all such rows as the lowest
+    # band '530-549' so they don't disappear from filters and pivots.
+    if "vs_band" in df.columns:
+        df = df.with_columns(
+            pl.when(
+                pl.col("vs_band").is_null()
+                | (pl.col("vs_band").cast(pl.Utf8).str.strip_chars() == "")
+            )
+            .then(pl.lit("530-549"))
+            .otherwise(pl.col("vs_band"))
+            .alias("vs_band")
+        )
+
     df = df.with_columns(pl.lit(cm.iso).alias("campaign_month"))
 
     flag_cols = [
@@ -265,7 +285,8 @@ def execute_plan(plan: list[IngestPlan], cfg: dict) -> dict:
     return summary
 
 
-def run_ingest(cfg: dict, expected_months: list[str] | None = None) -> dict:
+def run_ingest(cfg: dict, expected_months: list[str] | None = None,
+               force: bool = False) -> dict:
     """One-call entrypoint used by scripts.
 
     If `expected_months` is provided (list of 'YYYY-MM'), we additionally check
@@ -273,7 +294,7 @@ def run_ingest(cfg: dict, expected_months: list[str] | None = None) -> dict:
     appear nowhere in the plan are reported as 'missing_csv' so the caller
     can fail fast.
     """
-    plan = plan_ingestion(cfg)
+    plan = plan_ingestion(cfg, force=force)
     log.info("ingest plan: %d files (%s)", len(plan),
              ", ".join(f"{p.cm.iso}:{p.action}" for p in plan))
 

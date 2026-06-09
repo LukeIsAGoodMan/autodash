@@ -26,7 +26,8 @@ def create_app(cfg: dict | None = None) -> dash.Dash:
     app = dash.Dash(
         __name__,
         title=cfg["dashboard"]["title"],
-        external_stylesheets=[dbc.themes.BOOTSTRAP],
+        # FLATLY: corporate-clean Bootswatch theme; same dbc components.
+        external_stylesheets=[dbc.themes.FLATLY],
         suppress_callback_exceptions=True,
     )
     app.layout = build_layout(cfg)

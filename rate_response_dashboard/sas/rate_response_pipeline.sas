@@ -13,6 +13,7 @@ CAMPFLAG2
 CRS18_P
 CRS18_SEGMENT
 ENCRYPTED_PIN
+EXP_RESPONSE_SCORE
 NRM16 NRM16_TIER NRM16_TIER_VS4
 RISK_SCORE
 RISK_SCORE_TYPE
@@ -29,6 +30,7 @@ and endmark not like '%S%';
 
 vantage3 = score_vantage_value_v3*1;
 TRM_Score = TRM10_Score*1;
+EXP_RESPONSE_SCORE_num = EXP_RESPONSE_SCORE*1;
 ReservationNumber = cat(OFFER_CODE_FIRST_7,RESERVATION_SEQUENCE);
 TM12_3RR = TM12_3BR *1;
 
@@ -213,7 +215,7 @@ proc sql;
             count(*) as volume,
             sum(GrossResponse) as responders,
             sum(TRM_Score) as expected_responses,
-            sum(EXP_RESPONSE_SCORE) as expected_responses_xpm,
+            sum(EXP_RESPONSE_SCORE_num) as expected_responses_xpm,
             calculated responders/calculated volume as GRR,
             sum(NetResponse) as Boards,
             calculated Boards/calculated volume as NRR

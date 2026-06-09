@@ -1,8 +1,11 @@
-"""Dash callbacks. Every callback reads the parquet mart via a cached loader,
-applies filters, then delegates aggregation to src.metrics.
+"""Dash callbacks. All read the parquet mart via a cached loader, apply
+filters, then delegate aggregation to src.metrics.
 
-We register callbacks against an app passed in, instead of importing the app
-at module load time, so app.py stays the single source of truth.
+Major change vs the first draft:
+  - Executive Summary now returns 16 KPI values (Latest + Overall pair per card).
+  - Pivot returns a table (with Overall row+column) PLUS a combo chart
+    (stacked-bar volume mix + line metric trend).
+  - Model Performance has its own filter block and a new by-vs_band chart.
 """
 from __future__ import annotations
 
@@ -10,10 +13,10 @@ import io
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Iterable
 
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import polars as pl
 from dash import Input, Output, State, dash_table, dcc, no_update
 
@@ -26,20 +29,22 @@ PCT_METRICS = {
 RATIO_METRICS = {"actual_vs_expected_trm", "actual_vs_expected_xpm"}
 COUNT_METRICS = {"volume", "responders", "Boards"}
 
+PRIMARY = "#1b4f72"
+ACCENT = "#2980b9"
+
+PALETTE = [
+    "#1b4f72", "#2980b9", "#16a085", "#27ae60", "#f39c12",
+    "#d35400", "#c0392b", "#8e44ad", "#7f8c8d", "#34495e",
+]
+
 
 # ----------------------------------------------------------- mart cache
 @lru_cache(maxsize=1)
 def _cached_mart(mart_dir: str, mart_version: float) -> pl.DataFrame:
-    """Mart cache keyed by directory + a 'version' (we pass max mtime).
-
-    The lru_cache is global and lives for the process lifetime. Rebuild
-    happens automatically when a partition mtime changes.
-    """
     return read_mart(mart_dir)
 
 
 def _mart_version(mart_dir: str) -> float:
-    """Cheap cache key: most recent partition mtime."""
     p = Path(mart_dir)
     mtimes = [f.stat().st_mtime for f in p.glob("campaign_month=*/rollup.parquet")]
     return max(mtimes) if mtimes else 0.0
@@ -72,17 +77,20 @@ def _options(df: pl.DataFrame, col: str) -> list[dict]:
 def _fmt_count(v) -> str:
     if v is None:
         return "—"
-    return f"{int(v):,}"
+    try:
+        return f"{int(v):,}"
+    except (TypeError, ValueError):
+        return "—"
 
 
 def _fmt_pct(v) -> str:
-    if v is None:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     return f"{v * 100:.2f}%"
 
 
 def _fmt_ratio(v) -> str:
-    if v is None:
+    if v is None or (isinstance(v, float) and pd.isna(v)):
         return "—"
     return f"{v:.2f}"
 
@@ -97,9 +105,16 @@ def _fmt_metric(metric: str, v) -> str:
     return str(v) if v is not None else "—"
 
 
+def _latest_month(df: pl.DataFrame) -> str | None:
+    if df.is_empty() or "campaign_month" not in df.columns:
+        return None
+    return df["campaign_month"].max()
+
+
 # ----------------------------------------------------------- registration
 def register_callbacks(app, cfg: dict) -> None:
-    # ---------------------- header ----------------------
+
+    # ----------------------------------------------------------- header
     @app.callback(
         Output("subtitle-latest-month", "children"),
         Output("subtitle-last-refresh", "children"),
@@ -112,57 +127,80 @@ def register_callbacks(app, cfg: dict) -> None:
         ts = datetime.fromtimestamp(v).isoformat(timespec="seconds") if v else "—"
         return latest, ts
 
-    # ---------------------- exec tab KPIs ----------------
+    # ----------------------------------------------------------- executive
     @app.callback(
-        Output("kpi-volume", "children"),
-        Output("kpi-responders", "children"),
-        Output("kpi-boards", "children"),
-        Output("kpi-arr", "children"),
-        Output("kpi-exp-trm", "children"),
-        Output("kpi-exp-xpm", "children"),
-        Output("kpi-aoe-trm", "children"),
-        Output("kpi-board-rate", "children"),
+        Output("kpi-vol-latest", "children"),
+        Output("kpi-vol-overall", "children"),
+        Output("kpi-resp-latest", "children"),
+        Output("kpi-resp-overall", "children"),
+        Output("kpi-boards-latest", "children"),
+        Output("kpi-boards-overall", "children"),
+        Output("kpi-arr-latest", "children"),
+        Output("kpi-arr-overall", "children"),
+        Output("kpi-trm-latest", "children"),
+        Output("kpi-trm-overall", "children"),
+        Output("kpi-xpm-latest", "children"),
+        Output("kpi-xpm-overall", "children"),
+        Output("kpi-aoe-latest", "children"),
+        Output("kpi-aoe-overall", "children"),
+        Output("kpi-br-latest", "children"),
+        Output("kpi-br-overall", "children"),
         Output("exec-trend-chart", "figure"),
         Input("tabs", "active_tab"),
     )
-    def _exec(tab):
+    def _exec(_tab):
         df = load_mart(cfg)
         if df.is_empty():
             blank = {"data": [], "layout": {"title": "No data"}}
-            return ("—",) * 8 + (blank,)
+            return ("—",) * 16 + (blank,)
 
-        k = metrics.kpi_totals(df)
+        latest_m = _latest_month(df)
+        latest_df = df.filter(pl.col("campaign_month") == latest_m)
+        k_latest = metrics.kpi_totals(latest_df)
+        k_all = metrics.kpi_totals(df)
+
+        def L(key, fmt):
+            return fmt(k_latest.get(key))
+
+        def O(key, fmt):
+            return fmt(k_all.get(key))
+
         trend = metrics.monthly_trend(df).to_pandas().sort_values("campaign_month")
-
+        long = trend.melt(
+            id_vars="campaign_month",
+            value_vars=["actual_response_rate", "expected_rr_trm",
+                        "expected_rr_xpm", "board_rate"],
+            var_name="metric", value_name="value",
+        )
         fig = px.line(
-            trend.melt(
-                id_vars="campaign_month",
-                value_vars=["actual_response_rate", "expected_rr_trm",
-                            "expected_rr_xpm", "board_rate"],
-                var_name="metric", value_name="value",
-            ),
-            x="campaign_month", y="value", color="metric",
+            long, x="campaign_month", y="value", color="metric",
             markers=True,
+            color_discrete_sequence=PALETTE,
         )
         fig.update_layout(
             margin=dict(l=8, r=8, t=24, b=8),
             yaxis_tickformat=".1%",
+            yaxis_title=None,
+            xaxis_title=None,
             legend_title="",
             template="plotly_white",
+            hovermode="x unified",
+            height=380,
         )
+
         return (
-            _fmt_count(k["volume"]),
-            _fmt_count(k["responders"]),
-            _fmt_count(k["Boards"]),
-            _fmt_pct(k["actual_response_rate"]),
-            _fmt_pct(k["expected_rr_trm"]),
-            _fmt_pct(k["expected_rr_xpm"]),
-            _fmt_ratio(k["actual_vs_expected_trm"]),
-            _fmt_pct(k["board_rate"]),
+            L("volume", _fmt_count), O("volume", _fmt_count),
+            L("responders", _fmt_count), O("responders", _fmt_count),
+            L("Boards", _fmt_count), O("Boards", _fmt_count),
+            L("actual_response_rate", _fmt_pct), O("actual_response_rate", _fmt_pct),
+            L("expected_rr_trm", _fmt_pct), O("expected_rr_trm", _fmt_pct),
+            L("expected_rr_xpm", _fmt_pct), O("expected_rr_xpm", _fmt_pct),
+            L("actual_vs_expected_trm", _fmt_ratio), O("actual_vs_expected_trm", _fmt_ratio),
+            L("board_rate", _fmt_pct), O("board_rate", _fmt_pct),
             fig,
         )
 
-    # ---------------------- populate filter options ------
+    # ----------------------------------------------------------- filter options
     _filter_cols = {
         "f-months": "campaign_month",
         "f-vs": "vs_band",
@@ -173,7 +211,7 @@ def register_callbacks(app, cfg: dict) -> None:
         "f-fee": "annual_fee",
     }
 
-    for prefix in ("pivot", "export"):
+    for prefix in ("pivot", "model", "export"):
         for suffix, col in _filter_cols.items():
             cid = f"{prefix}-{suffix}"
 
@@ -181,10 +219,11 @@ def register_callbacks(app, cfg: dict) -> None:
             def _opts(_tab, _col=col):
                 return _options(load_mart(cfg), _col)
 
-    # ---------------------- pivot table ------------------
+    # ----------------------------------------------------------- pivot
     @app.callback(
         Output("pivot-table", "data"),
         Output("pivot-table", "columns"),
+        Output("pivot-combo-chart", "figure"),
         Input("pivot-row-dim", "value"),
         Input("pivot-metric", "value"),
         Input("pivot-suppress", "value"),
@@ -205,70 +244,180 @@ def register_callbacks(app, cfg: dict) -> None:
             "scorecard": f_scorecard, "Prospect_type": f_prospect,
             "rm_flag": f_rm, "trm10_tier": f_trm, "annual_fee": f_fee,
         })
+        empty_fig = {"data": [], "layout": {"title": "No data"}}
         if df.is_empty() or row_dim is None or metric is None:
-            return [], []
+            return [], [], empty_fig
 
-        # Aggregate at the cell level first so suppression considers cell volume.
-        long = metrics.aggregate_by(df, [row_dim, "campaign_month"])
-        long = metrics.suppress_small_cells(long, threshold=suppress or 0)
+        # 1) Per-cell aggregation: each row_dim x month combination, then mask
+        #    small cells. Suppression nulls the rate metric only.
+        cell = metrics.aggregate_by(df, [row_dim, "campaign_month"])
+        cell_masked = metrics.suppress_small_cells(cell, threshold=suppress or 0)
 
-        # Pivot to wide form on the chosen metric.
-        wide = long.to_pandas().pivot_table(
-            index=row_dim, columns="campaign_month",
-            values=metric, aggfunc="first",
-        ).reset_index()
-        wide.columns = [str(c) for c in wide.columns]
+        # 2) Build the wide pivot from masked metric values.
+        wide_metric = (
+            cell_masked.to_pandas()
+            .pivot_table(index=row_dim, columns="campaign_month",
+                         values=metric, aggfunc="first")
+            .reset_index()
+        )
+        # 3) Overall column = recompute metric across all months for each row_dim
+        row_total = metrics.aggregate_by(df, [row_dim])
+        row_total_masked = metrics.suppress_small_cells(row_total, threshold=suppress or 0)
+        wide_metric = wide_metric.merge(
+            row_total_masked.select([row_dim, metric]).to_pandas()
+                            .rename(columns={metric: "Overall"}),
+            on=row_dim, how="left",
+        )
 
-        # Format values according to metric type.
-        for c in wide.columns[1:]:
-            wide[c] = wide[c].apply(lambda v: _fmt_metric(metric, v) if fmt == "pct"
-                                    or metric in COUNT_METRICS
-                                    else (f"{v:.4f}" if v is not None and not pd.isna(v) else "—"))
+        # 4) Overall row = recompute metric across all row_dim values per month
+        month_total = metrics.aggregate_by(df, ["campaign_month"])
+        overall_row = month_total.to_pandas().set_index("campaign_month")[metric].to_dict()
+        overall_total = metrics.kpi_totals(df).get(metric)
+        overall_row[row_dim] = "Overall"
+        overall_row["Overall"] = overall_total
+        wide_metric = pd.concat([wide_metric, pd.DataFrame([overall_row])],
+                                ignore_index=True)
 
-        columns = [{"name": c, "id": c} for c in wide.columns]
-        return wide.to_dict("records"), columns
+        # 5) Rename row_dim column to "Row" for stable DataTable referencing
+        wide_metric = wide_metric.rename(columns={row_dim: "Row"})
+        wide_metric.columns = [str(c) for c in wide_metric.columns]
 
-    # ---------------------- model performance ------------
+        # 6) Format values per metric type
+        for c in wide_metric.columns[1:]:
+            wide_metric[c] = wide_metric[c].apply(lambda v: _fmt_metric(metric, v))
+
+        columns = [{"name": c, "id": c} for c in wide_metric.columns]
+        data = wide_metric.to_dict("records")
+
+        # 7) Combo chart: stacked bars of volume by row_dim per month + line
+        #    of the selected metric per month (secondary axis).
+        vol_pivot = (
+            df.group_by([row_dim, "campaign_month"])
+              .agg(pl.col("volume").sum().alias("volume"))
+              .sort([row_dim, "campaign_month"])
+              .to_pandas()
+        )
+        fig = go.Figure()
+        for i, dim_val in enumerate(sorted(vol_pivot[row_dim].dropna().unique(),
+                                            key=lambda v: str(v))):
+            sub = vol_pivot[vol_pivot[row_dim] == dim_val].sort_values("campaign_month")
+            fig.add_bar(
+                x=sub["campaign_month"], y=sub["volume"],
+                name=str(dim_val),
+                marker_color=PALETTE[i % len(PALETTE)],
+            )
+
+        m_pdf = month_total.to_pandas().sort_values("campaign_month")
+        fig.add_scatter(
+            x=m_pdf["campaign_month"], y=m_pdf[metric],
+            yaxis="y2", mode="lines+markers",
+            name=metric,
+            line=dict(color="#c0392b", width=3),
+            marker=dict(size=8),
+        )
+
+        y2_fmt = ".1%" if metric in PCT_METRICS else (
+            ".2f" if metric in RATIO_METRICS else None
+        )
+        fig.update_layout(
+            barmode="stack",
+            template="plotly_white",
+            margin=dict(l=8, r=8, t=24, b=8),
+            xaxis_title=None,
+            yaxis=dict(title="Volume", tickformat=","),
+            yaxis2=dict(title=metric, overlaying="y", side="right",
+                        tickformat=y2_fmt, showgrid=False),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02,
+                        xanchor="right", x=1),
+            hovermode="x unified",
+            height=440,
+        )
+        return data, columns, fig
+
+    # ----------------------------------------------------------- model perf
     @app.callback(
+        Output("model-by-vsband", "figure"),
         Output("model-arr-vs-exp", "figure"),
         Output("model-by-trm", "figure"),
         Output("model-by-scorecard", "figure"),
-        Input("tabs", "active_tab"),
+        Input("model-f-months", "value"),
+        Input("model-f-vs", "value"),
+        Input("model-f-scorecard", "value"),
+        Input("model-f-prospect", "value"),
+        Input("model-f-rm", "value"),
+        Input("model-f-trm", "value"),
+        Input("model-f-fee", "value"),
     )
-    def _model(_tab):
+    def _model(f_months, f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee):
         df = load_mart(cfg)
+        df = _apply_filters(df, {
+            "campaign_month": f_months, "vs_band": f_vs,
+            "scorecard": f_scorecard, "Prospect_type": f_prospect,
+            "rm_flag": f_rm, "trm10_tier": f_trm, "annual_fee": f_fee,
+        })
+        blank = {"data": [], "layout": {"title": "No data"}}
         if df.is_empty():
-            blank = {"data": [], "layout": {"title": "No data"}}
-            return blank, blank, blank
+            return blank, blank, blank, blank
 
-        by_month = metrics.monthly_trend(df).to_pandas().sort_values("campaign_month")
-        f1 = px.line(
-            by_month.melt(
-                id_vars="campaign_month",
-                value_vars=["actual_response_rate", "expected_rr_trm"],
-                var_name="series", value_name="rate",
-            ),
-            x="campaign_month", y="rate", color="series", markers=True,
+        # by vs_band: grouped bars actual vs expected_trm vs expected_xpm
+        by_vs = metrics.aggregate_by(df, ["vs_band"]).to_pandas().sort_values("vs_band")
+        vs_long = by_vs.melt(
+            id_vars="vs_band",
+            value_vars=["actual_response_rate", "expected_rr_trm", "expected_rr_xpm"],
+            var_name="series", value_name="rate",
         )
-        f1.update_layout(template="plotly_white", yaxis_tickformat=".1%",
+        f0 = px.bar(
+            vs_long, x="vs_band", y="rate", color="series", barmode="group",
+            color_discrete_sequence=[ACCENT, "#16a085", "#f39c12"],
+            text="rate",
+        )
+        f0.update_traces(texttemplate="%{text:.2%}", textposition="outside",
+                         textfont_size=11)
+        f0.update_layout(template="plotly_white", yaxis_tickformat=".1%",
+                         yaxis_title="rate", xaxis_title=None,
+                         legend_title="", height=400,
                          margin=dict(l=8, r=8, t=24, b=8))
 
+        # by month: actual vs expected_trm
+        by_m = metrics.monthly_trend(df).to_pandas().sort_values("campaign_month")
+        m_long = by_m.melt(
+            id_vars="campaign_month",
+            value_vars=["actual_response_rate", "expected_rr_trm"],
+            var_name="series", value_name="rate",
+        )
+        f1 = px.line(m_long, x="campaign_month", y="rate", color="series",
+                     markers=True,
+                     color_discrete_sequence=[ACCENT, "#16a085"])
+        f1.update_layout(template="plotly_white", yaxis_tickformat=".1%",
+                         margin=dict(l=8, r=8, t=24, b=8),
+                         xaxis_title=None, yaxis_title="rate",
+                         legend_title="", hovermode="x unified",
+                         height=380)
+
+        # by TRM10 tier: actual response rate
         by_trm = metrics.aggregate_by(df, ["trm10_tier"]).to_pandas().sort_values("trm10_tier")
         f2 = px.bar(by_trm, x="trm10_tier", y="actual_response_rate",
-                    text="actual_response_rate")
-        f2.update_traces(texttemplate="%{text:.2%}", textposition="outside")
+                    text="actual_response_rate",
+                    color_discrete_sequence=[ACCENT])
+        f2.update_traces(texttemplate="%{text:.2%}", textposition="outside",
+                         textfont_size=11)
         f2.update_layout(template="plotly_white", yaxis_tickformat=".1%",
-                         margin=dict(l=8, r=8, t=24, b=8))
+                         xaxis_title=None, yaxis_title="rate",
+                         margin=dict(l=8, r=8, t=24, b=8), height=380)
 
+        # by scorecard: actual / expected ratio
         by_sc = metrics.aggregate_by(df, ["scorecard"]).to_pandas().sort_values("scorecard")
         f3 = px.bar(by_sc, x="scorecard", y="actual_vs_expected_trm",
-                    text="actual_vs_expected_trm")
-        f3.update_traces(texttemplate="%{text:.2f}", textposition="outside")
+                    text="actual_vs_expected_trm",
+                    color_discrete_sequence=["#16a085"])
+        f3.update_traces(texttemplate="%{text:.2f}", textposition="outside",
+                         textfont_size=11)
         f3.update_layout(template="plotly_white",
-                         margin=dict(l=8, r=8, t=24, b=8))
-        return f1, f2, f3
+                         xaxis_title=None, yaxis_title="actual / expected",
+                         margin=dict(l=8, r=8, t=24, b=8), height=380)
+        return f0, f1, f2, f3
 
-    # ---------------------- data quality tab -------------
+    # ----------------------------------------------------------- data quality
     @app.callback(
         Output("dq-latest", "children"),
         Output("dq-last-refresh", "children"),
@@ -292,7 +441,7 @@ def register_callbacks(app, cfg: dict) -> None:
         return (months[-1] if months else "—", ts, _fmt_count(len(months)),
                 data, cols)
 
-    # ---------------------- export -----------------------
+    # ----------------------------------------------------------- export
     @app.callback(
         Output("export-download", "data"),
         Input("btn-export-csv", "n_clicks"),

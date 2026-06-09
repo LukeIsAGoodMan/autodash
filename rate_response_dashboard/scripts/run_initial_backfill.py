@@ -41,6 +41,9 @@ def main() -> int:
     p.add_argument("--end", required=True, help="last campaign month, e.g. 2026-04")
     p.add_argument("--skip-sas", action="store_true",
                    help="don't connect to SAS; just ingest whatever CSVs are present")
+    p.add_argument("--force", action="store_true",
+                   help="re-ingest every month even if the partition is up to date "
+                        "(use after changing ingest logic, e.g. vs_band normalization)")
     args = p.parse_args()
 
     cfg = load_config()
@@ -77,8 +80,8 @@ def main() -> int:
         log.info("Phase 1 skipped (--skip-sas)")
 
     # ---- 2. Ingest ----------------------------------------------------
-    log.info("Phase 2: ingest rollup CSVs into parquet mart")
-    summary = run_ingest(cfg, expected_months=months)
+    log.info("Phase 2: ingest rollup CSVs into parquet mart (force=%s)", args.force)
+    summary = run_ingest(cfg, expected_months=months, force=args.force)
     log.info("Backfill summary: %s", summary)
 
     successes = summary.get("added", 0) + summary.get("replaced", 0)
