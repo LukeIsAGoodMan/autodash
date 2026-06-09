@@ -14,13 +14,19 @@ from dash import dash_table, dcc, html
 
 # ---------------------------------------------------------------- helpers
 def kpi_card_dual(title: str, latest_id: str, overall_id: str,
-                  variant: str = "headline") -> html.Div:
+                  variant: str = "headline",
+                  card_id: str | None = None) -> html.Div:
     """KPI card with the latest-month value as the big number and an overall
     subtitle below. `variant` controls the top-border color: 'headline' (blue),
-    'good', 'bad', 'warn', or '' (no accent)."""
+    'good', 'bad', 'warn', or '' (no accent). If `card_id` is provided, the
+    outer div gets an id so a callback can swap className dynamically (used
+    for status-driven coloring like actual/expected)."""
     classes = "kpi-card"
     if variant:
         classes += f" {variant}"
+    kwargs = {"className": classes}
+    if card_id:
+        kwargs["id"] = card_id
     return html.Div([
         html.Div(title, className="k-label"),
         html.Div(id=latest_id, className="k-value"),
@@ -28,7 +34,7 @@ def kpi_card_dual(title: str, latest_id: str, overall_id: str,
             html.Span("All months", className="k-sub-label"),
             html.Span(id=overall_id, className="k-sub-value"),
         ], className="k-sub"),
-    ], className=classes)
+    ], **kwargs)
 
 
 def kpi_card_single(title: str, kpi_id: str, variant: str = "") -> html.Div:
@@ -101,7 +107,8 @@ def tab_executive() -> dbc.Tab:
         dbc.Col(kpi_card_dual("Actual response rate",     "kpi-arr-latest", "kpi-arr-overall", ""), md=3),
         dbc.Col(kpi_card_dual("Expected RR (TRM)",        "kpi-trm-latest", "kpi-trm-overall", ""), md=3),
         dbc.Col(kpi_card_dual("Expected RR (XPM)",        "kpi-xpm-latest", "kpi-xpm-overall", ""), md=3),
-        dbc.Col(kpi_card_dual("Actual / Expected (TRM)",  "kpi-aoe-latest", "kpi-aoe-overall", ""), md=3),
+        dbc.Col(kpi_card_dual("Actual / Expected (TRM)",  "kpi-aoe-latest", "kpi-aoe-overall",
+                              variant="", card_id="kpi-aoe-card"), md=3),
     ], className="g-3 mt-3")
 
     trend = dbc.Card(dbc.CardBody([
@@ -173,8 +180,9 @@ def tab_pivot(cfg: dict) -> dbc.Tab:
         style_table={"overflowX": "auto"},
         style_cell={"padding": "8px", "fontFamily": "Segoe UI, sans-serif",
                     "fontSize": "12.5px"},
+        # Static rules live here; the callback emits a fuller list that
+        # includes per-cell volume gradients in addition to these.
         style_data_conditional=[
-            {"if": {"row_index": "odd"}, "backgroundColor": "#fafbfd"},
             {"if": {"filter_query": "{Row} = 'Overall'"},
              "backgroundColor": "#e8eff8", "fontWeight": "700"},
         ],

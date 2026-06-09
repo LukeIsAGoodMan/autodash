@@ -154,6 +154,7 @@ def register_callbacks(app, cfg: dict) -> None:
         Output("kpi-xpm-overall", "children"),
         Output("kpi-aoe-latest", "children"),
         Output("kpi-aoe-overall", "children"),
+        Output("kpi-aoe-card", "className"),
         Output("exec-trend-chart", "figure"),
         Input("tabs", "active_tab"),
     )
@@ -161,7 +162,7 @@ def register_callbacks(app, cfg: dict) -> None:
         df = load_mart(cfg)
         if df.is_empty():
             blank = {"data": [], "layout": {"title": "No data"}}
-            return ("—",) + ("—",) * 16 + (blank,)
+            return ("—",) + ("—",) * 16 + ("kpi-card", blank)
 
         latest_m = _latest_month(df)
         latest_df = df.filter(pl.col("campaign_month") == latest_m)
@@ -196,6 +197,19 @@ def register_callbacks(app, cfg: dict) -> None:
         fig.update_traces(line=dict(width=2.5), marker=dict(size=7,
                                                             line=dict(color="#ffffff", width=1.5)))
 
+        # Status color for the Actual / Expected (TRM) card. Uses the latest
+        # month's ratio: >= 0.95 → good (green), < 0.80 → bad (red), in
+        # between → warn (amber). Null → plain.
+        aoe_latest = k_latest.get("actual_vs_expected_trm")
+        if aoe_latest is None:
+            aoe_class = "kpi-card"
+        elif aoe_latest >= 0.95:
+            aoe_class = "kpi-card good"
+        elif aoe_latest < 0.80:
+            aoe_class = "kpi-card bad"
+        else:
+            aoe_class = "kpi-card warn"
+
         return (
             latest_m or "—",
             L("volume", _fmt_count), O("volume", _fmt_count),
@@ -206,6 +220,7 @@ def register_callbacks(app, cfg: dict) -> None:
             L("expected_rr_trm", _fmt_pct), O("expected_rr_trm", _fmt_pct),
             L("expected_rr_xpm", _fmt_pct), O("expected_rr_xpm", _fmt_pct),
             L("actual_vs_expected_trm", _fmt_ratio), O("actual_vs_expected_trm", _fmt_ratio),
+            aoe_class,
             fig,
         )
 
@@ -232,6 +247,7 @@ def register_callbacks(app, cfg: dict) -> None:
     @app.callback(
         Output("pivot-table", "data"),
         Output("pivot-table", "columns"),
+        Output("pivot-table", "style_data_conditional"),
         Output("pivot-combo-chart", "figure"),
         Input("pivot-row-dim", "value"),
         Input("pivot-metric", "value"),
@@ -255,7 +271,7 @@ def register_callbacks(app, cfg: dict) -> None:
         })
         empty_fig = {"data": [], "layout": {"title": "No data"}}
         if df.is_empty() or row_dim is None or metric is None:
-            return [], [], empty_fig
+            return [], [], [], empty_fig
 
         # 1) Per-cell aggregation: each row_dim x month combination, then mask
         #    small cells. Suppression nulls the rate metric only.
@@ -298,6 +314,57 @@ def register_callbacks(app, cfg: dict) -> None:
         columns = [{"name": c, "id": c} for c in wide_metric.columns]
         data = wide_metric.to_dict("records")
 
+        # ---- inline volume bars in each cell -----------------------------
+        # Background gradient encodes the cell's share of column total volume.
+        # Width in % = cell_volume / column_volume_total. The Overall row
+        # (already styled separately) keeps its solid highlight.
+        vol_cell = (
+            df.group_by([row_dim, "campaign_month"])
+              .agg(pl.col("volume").sum().alias("volume"))
+              .to_pandas()
+        )
+        vol_wide = vol_cell.pivot_table(
+            index=row_dim, columns="campaign_month",
+            values="volume", aggfunc="first",
+        )
+        vol_wide.columns = [str(c) for c in vol_wide.columns]
+
+        # Overall column for the bar is each row's total / grand total
+        row_totals = vol_wide.sum(axis=1)
+        grand_total = row_totals.sum()
+        if grand_total and grand_total > 0:
+            vol_wide["Overall"] = row_totals
+        else:
+            vol_wide["Overall"] = 0.0
+
+        gradient_rules = []
+        for col in vol_wide.columns:
+            col_total = vol_wide[col].sum()
+            if not col_total or col_total <= 0:
+                continue
+            for row_val, vol in vol_wide[col].items():
+                if vol is None or pd.isna(vol) or vol <= 0:
+                    continue
+                pct = max(2, min(100, (vol / col_total) * 100))
+                # filter_query needs the cell value quoted; row_val can be numeric
+                # for some dimensions so coerce to string consistently.
+                rv = str(row_val).replace('"', '\\"')
+                gradient_rules.append({
+                    "if": {
+                        "column_id": col,
+                        "filter_query": f'{{Row}} = "{rv}"',
+                    },
+                    "background":
+                        f"linear-gradient(90deg, rgba(26,77,140,0.10) {pct:.1f}%, "
+                        f"transparent {pct:.1f}%)",
+                })
+
+        # Static rules go LAST so they override the gradient on the Overall row.
+        style_rules = gradient_rules + [
+            {"if": {"filter_query": "{Row} = 'Overall'"},
+             "backgroundColor": "#e8eff8", "fontWeight": "700"},
+        ]
+
         # 7) Combo chart: stacked bars of volume by row_dim per month + line
         #    of the selected metric per month (secondary axis).
         vol_pivot = (
@@ -336,7 +403,7 @@ def register_callbacks(app, cfg: dict) -> None:
                         tickformat=y2_fmt, showgrid=False),
             height=440,
         )
-        return data, columns, fig
+        return data, columns, style_rules, fig
 
     # ----------------------------------------------------------- model perf
     @app.callback(

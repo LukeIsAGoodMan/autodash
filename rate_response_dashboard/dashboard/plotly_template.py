@@ -83,7 +83,9 @@ omni_light = go.layout.Template(
             bgcolor="rgba(0,0,0,0)",
             bordercolor="rgba(0,0,0,0)",
         ),
-        margin=dict(l=12, r=12, t=24, b=12),
+        # Generous margins so y-axis tick labels and titles don't get clipped,
+        # and so combo charts with a yaxis2 have room on the right.
+        margin=dict(l=64, r=64, t=48, b=56),
         hovermode="x unified",
         hoverlabel=dict(
             bgcolor=INK_CHIP,
