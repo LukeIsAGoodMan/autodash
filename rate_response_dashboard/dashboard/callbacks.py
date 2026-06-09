@@ -30,12 +30,16 @@ PCT_METRICS = {
 RATIO_METRICS = {"actual_vs_expected_trm", "actual_vs_expected_xpm"}
 COUNT_METRICS = {"volume", "responders", "Boards"}
 
-PRIMARY = "#1b4f72"
-ACCENT = "#2980b9"
+# Palette kept in sync with plotly_template.OMNI_PALETTE and assets/custom.css.
+PRIMARY = "#1a4d8c"          # --omni
+ACCENT = "#4a7bb7"           # --accent
+GOOD = "#2e7a52"             # --good
+WARN = "#c98a25"             # --warn
+BAD = "#b3434a"              # --bad
 
 PALETTE = [
-    "#1b4f72", "#2980b9", "#16a085", "#27ae60", "#f39c12",
-    "#d35400", "#c0392b", "#8e44ad", "#7f8c8d", "#34495e",
+    "#1a4d8c", "#4a7bb7", "#2e7a52", "#c98a25", "#b3434a",
+    "#6b7d92", "#7e9bc0", "#4f6378", "#a9b8c8", "#384a5e",
 ]
 
 
@@ -115,18 +119,21 @@ def _latest_month(df: pl.DataFrame) -> str | None:
 # ----------------------------------------------------------- registration
 def register_callbacks(app, cfg: dict) -> None:
 
-    # ----------------------------------------------------------- header
+    # ----------------------------------------------------------- hero
     @app.callback(
-        Output("subtitle-latest-month", "children"),
-        Output("subtitle-last-refresh", "children"),
+        Output("hero-latest", "children"),
+        Output("hero-months", "children"),
+        Output("hero-refresh", "children"),
+        Output("hero-verdict-text", "children"),
         Input("tabs", "active_tab"),
     )
-    def _header(_tab):
+    def _hero(_tab):
         months = list_partition_months(cfg["paths"]["mart_dir"])
         latest = months[-1] if months else "—"
         v = _mart_version(cfg["paths"]["mart_dir"])
         ts = datetime.fromtimestamp(v).isoformat(timespec="seconds") if v else "—"
-        return latest, ts
+        verdict = "data fresh" if months else "no data"
+        return latest, _fmt_count(len(months)), ts, verdict
 
     # ----------------------------------------------------------- executive
     @app.callback(
@@ -180,15 +187,14 @@ def register_callbacks(app, cfg: dict) -> None:
             color_discrete_sequence=PALETTE,
         )
         fig.update_layout(
-            margin=dict(l=8, r=8, t=24, b=8),
             yaxis_tickformat=".1%",
             yaxis_title=None,
             xaxis_title=None,
             legend_title="",
-            template="plotly_white",
-            hovermode="x unified",
             height=380,
         )
+        fig.update_traces(line=dict(width=2.5), marker=dict(size=7,
+                                                            line=dict(color="#ffffff", width=1.5)))
 
         return (
             latest_m or "—",
@@ -315,8 +321,8 @@ def register_callbacks(app, cfg: dict) -> None:
             x=m_pdf["campaign_month"], y=m_pdf[metric],
             yaxis="y2", mode="lines+markers",
             name=metric,
-            line=dict(color="#c0392b", width=3),
-            marker=dict(size=8),
+            line=dict(color=BAD, width=3),
+            marker=dict(size=8, line=dict(color="#ffffff", width=1.8)),
         )
 
         y2_fmt = ".1%" if metric in PCT_METRICS else (
@@ -324,15 +330,10 @@ def register_callbacks(app, cfg: dict) -> None:
         )
         fig.update_layout(
             barmode="stack",
-            template="plotly_white",
-            margin=dict(l=8, r=8, t=24, b=8),
             xaxis_title=None,
             yaxis=dict(title="Volume", tickformat=","),
             yaxis2=dict(title=metric, overlaying="y", side="right",
                         tickformat=y2_fmt, showgrid=False),
-            legend=dict(orientation="h", yanchor="bottom", y=1.02,
-                        xanchor="right", x=1),
-            hovermode="x unified",
             height=440,
         )
         return data, columns, fig
@@ -371,15 +372,13 @@ def register_callbacks(app, cfg: dict) -> None:
         )
         f0 = px.bar(
             vs_long, x="vs_band", y="rate", color="series", barmode="group",
-            color_discrete_sequence=[ACCENT, "#16a085", "#f39c12"],
+            color_discrete_sequence=[PRIMARY, GOOD, WARN],
             text="rate",
         )
         f0.update_traces(texttemplate="%{text:.2%}", textposition="outside",
-                         textfont_size=11)
-        f0.update_layout(template="plotly_white", yaxis_tickformat=".1%",
-                         yaxis_title="rate", xaxis_title=None,
-                         legend_title="", height=400,
-                         margin=dict(l=8, r=8, t=24, b=8))
+                         textfont_size=10)
+        f0.update_layout(yaxis_tickformat=".1%", yaxis_title="rate",
+                         xaxis_title=None, legend_title="", height=400)
 
         # by month: actual vs expected_trm
         by_m = metrics.monthly_trend(df).to_pandas().sort_values("campaign_month")
@@ -390,34 +389,31 @@ def register_callbacks(app, cfg: dict) -> None:
         )
         f1 = px.line(m_long, x="campaign_month", y="rate", color="series",
                      markers=True,
-                     color_discrete_sequence=[ACCENT, "#16a085"])
-        f1.update_layout(template="plotly_white", yaxis_tickformat=".1%",
-                         margin=dict(l=8, r=8, t=24, b=8),
-                         xaxis_title=None, yaxis_title="rate",
-                         legend_title="", hovermode="x unified",
-                         height=380)
+                     color_discrete_sequence=[PRIMARY, GOOD])
+        f1.update_traces(line=dict(width=2.5),
+                         marker=dict(size=7, line=dict(color="#ffffff", width=1.5)))
+        f1.update_layout(yaxis_tickformat=".1%", xaxis_title=None,
+                         yaxis_title="rate", legend_title="", height=380)
 
-        # by TRM10 tier: actual response rate
+        # by TRM10 tier
         by_trm = metrics.aggregate_by(df, ["trm10_tier"]).to_pandas().sort_values("trm10_tier")
         f2 = px.bar(by_trm, x="trm10_tier", y="actual_response_rate",
                     text="actual_response_rate",
-                    color_discrete_sequence=[ACCENT])
+                    color_discrete_sequence=[PRIMARY])
         f2.update_traces(texttemplate="%{text:.2%}", textposition="outside",
-                         textfont_size=11)
-        f2.update_layout(template="plotly_white", yaxis_tickformat=".1%",
-                         xaxis_title=None, yaxis_title="rate",
-                         margin=dict(l=8, r=8, t=24, b=8), height=380)
+                         textfont_size=10)
+        f2.update_layout(yaxis_tickformat=".1%", xaxis_title=None,
+                         yaxis_title="rate", height=380)
 
-        # by scorecard: actual / expected ratio
+        # by scorecard
         by_sc = metrics.aggregate_by(df, ["scorecard"]).to_pandas().sort_values("scorecard")
         f3 = px.bar(by_sc, x="scorecard", y="actual_vs_expected_trm",
                     text="actual_vs_expected_trm",
-                    color_discrete_sequence=["#16a085"])
+                    color_discrete_sequence=[GOOD])
         f3.update_traces(texttemplate="%{text:.2f}", textposition="outside",
-                         textfont_size=11)
-        f3.update_layout(template="plotly_white",
-                         xaxis_title=None, yaxis_title="actual / expected",
-                         margin=dict(l=8, r=8, t=24, b=8), height=380)
+                         textfont_size=10)
+        f3.update_layout(xaxis_title=None,
+                         yaxis_title="actual / expected", height=380)
         return f0, f1, f2, f3
 
     # ----------------------------------------------------------- data quality

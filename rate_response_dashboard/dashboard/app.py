@@ -15,6 +15,7 @@ import dash_bootstrap_components as dbc
 # Allow running as `python dashboard/app.py` from project root.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import dashboard.plotly_template  # noqa: F401, E402  — registers omni_light as default
 from dashboard.callbacks import register_callbacks  # noqa: E402
 from dashboard.layout import build_layout            # noqa: E402
 from src.utils import load_config, setup_logging     # noqa: E402

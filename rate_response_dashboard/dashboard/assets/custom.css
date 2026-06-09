@@ -1,0 +1,433 @@
+/* ============================================================================
+   Rate Response Dashboard — custom theme
+   Corporate blue/white brand. Loaded after FLATLY/Bootstrap; this file wins.
+   All component rules live here so layout.py stays mostly className-driven.
+   ============================================================================ */
+
+:root {
+  /* Brand */
+  --omni:        #1a4d8c;   /* primary corporate blue */
+  --omni-soft:   #e8eff8;   /* tint for hovers/fills */
+  --accent:      #4a7bb7;   /* secondary accent blue */
+  --accent-soft: #d4e3f3;
+
+  /* Surfaces */
+  --paper:  #f4f7fa;        /* page background */
+  --panel:  #ffffff;        /* card background */
+
+  /* Text */
+  --ink:       #0e2238;     /* primary text */
+  --ink-soft:  #2c4663;     /* secondary text */
+  --muted:     #6b7d92;     /* labels, axis ticks, hints */
+
+  /* Status */
+  --good: #2e7a52;
+  --bad:  #b3434a;
+  --warn: #c98a25;
+
+  /* Lines */
+  --line:      #dde3ea;
+  --line-soft: #eef1f5;
+
+  /* Tooltips, dark chips */
+  --ink-chip: #1c2a3a;
+
+  /* Shadows */
+  --shadow:    0 18px 48px rgba(14, 34, 56, .10);
+  --shadow-sm: 0 8px 22px  rgba(14, 34, 56, .06);
+}
+
+/* ---------------------------------------------------------- body / global */
+html, body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto,
+               "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.45;
+}
+#_dash-app-content {
+  background: var(--paper);
+  min-height: 100vh;
+}
+
+/* ---------------------------------------------------------- hero */
+.hero {
+  position: relative;
+  background:
+    radial-gradient(1200px 320px at 88% -40%, rgba(26, 77, 140, .18), transparent 60%),
+    linear-gradient(135deg, #ffffff 0%, #f4f7fa 55%, #eff4fa 100%);
+  padding: 32px 32px 24px 32px;
+  border-bottom: 1px solid var(--line);
+}
+.hero h1 {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.08;
+  letter-spacing: -.01em;
+  color: var(--ink);
+  margin: 0 0 6px 0;
+}
+.hero .hero-sub {
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  margin: 0 0 14px 0;
+}
+.hero .tags {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.hero .tag {
+  background: var(--omni-soft);
+  color: var(--omni);
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.hero .tag .tag-label {
+  color: var(--ink-soft);
+  font-weight: 500;
+  opacity: 0.85;
+}
+.hero .verdict {
+  position: absolute;
+  top: 28px;
+  right: 32px;
+  background: var(--ink-chip);
+  color: #eef3ee;
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: var(--shadow-sm);
+}
+.hero .verdict .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--good);
+  box-shadow: 0 0 0 4px rgba(46, 122, 82, .25);
+  flex-shrink: 0;
+}
+
+/* ---------------------------------------------------------- nav tabs (underline) */
+.nav-tabs {
+  border-bottom: 1px solid var(--line);
+  padding: 0 28px;
+  background: var(--paper);
+  margin-bottom: 0;
+  gap: 4px;
+}
+.nav-tabs .nav-link {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 12px 16px;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: -1px;
+  background: transparent;
+  transition: color .12s ease, border-color .12s ease;
+}
+.nav-tabs .nav-link:hover {
+  color: var(--ink);
+  border-bottom-color: var(--accent-soft);
+  background: transparent;
+}
+.nav-tabs .nav-link.active {
+  color: var(--ink);
+  background: transparent;
+  border-bottom-color: var(--omni);
+}
+
+/* ---------------------------------------------------------- tab content area */
+.tab-content-area {
+  padding: 22px 28px 36px 28px;
+  background: var(--paper);
+  min-height: calc(100vh - 200px);
+}
+
+/* ---------------------------------------------------------- section headers */
+.section-header {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin: 4px 0 14px 0;
+  flex-wrap: wrap;
+}
+.section-header .eyebrow {
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .22em;
+  text-transform: uppercase;
+  color: var(--omni);
+  border-left: 3px solid var(--accent);
+  padding-left: 10px;
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.section-header .eyebrow .month-chip {
+  background: var(--omni);
+  color: #ffffff;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 12px;
+  letter-spacing: 0;
+  font-weight: 700;
+}
+.section-header .section-sub {
+  color: var(--muted);
+  font-size: 12.5px;
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+/* ---------------------------------------------------------- sticky controls bar */
+.controls-bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: rgba(244, 247, 250, .92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: var(--shadow-sm);
+  margin: 0 0 18px 0;
+}
+.controls-bar label {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 4px;
+  display: block;
+}
+
+/* ---------------------------------------------------------- dropdowns */
+.Select-control,
+.Select--multi .Select-control {
+  border-radius: 10px !important;
+  border: 1px solid var(--line) !important;
+  background: var(--panel) !important;
+  min-height: 36px !important;
+  font-size: 13px !important;
+  box-shadow: none !important;
+}
+.Select-control:hover {
+  border-color: var(--accent) !important;
+}
+.is-focused:not(.is-open) > .Select-control {
+  border-color: var(--omni) !important;
+  box-shadow: 0 0 0 3px rgba(26, 77, 140, .15) !important;
+}
+.Select-placeholder, .Select--single > .Select-control .Select-value {
+  line-height: 34px !important;
+}
+.Select-placeholder {
+  color: var(--muted) !important;
+}
+.Select-menu-outer {
+  border-radius: 10px !important;
+  border: 1px solid var(--line) !important;
+  box-shadow: var(--shadow) !important;
+  margin-top: 2px !important;
+}
+.Select-option {
+  font-size: 13px !important;
+  padding: 7px 10px !important;
+}
+.Select-option.is-focused {
+  background: var(--omni-soft) !important;
+  color: var(--omni) !important;
+}
+.Select--multi .Select-value {
+  background: var(--omni-soft) !important;
+  border: 1px solid var(--accent-soft) !important;
+  color: var(--omni) !important;
+  border-radius: 6px !important;
+  font-size: 12px !important;
+  margin: 3px 4px 0 0 !important;
+}
+.Select--multi .Select-value-icon {
+  border-right: 1px solid var(--accent-soft) !important;
+  color: var(--omni) !important;
+}
+.Select--multi .Select-value-icon:hover {
+  background: var(--accent-soft) !important;
+}
+
+/* ---------------------------------------------------------- inputs / radios */
+input[type="number"], input.form-control, input[type="text"] {
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--ink);
+  width: 100%;
+}
+input[type="number"]:focus, input.form-control:focus {
+  outline: none;
+  border-color: var(--omni);
+  box-shadow: 0 0 0 3px rgba(26, 77, 140, .15);
+}
+.form-check-input:checked {
+  background-color: var(--omni) !important;
+  border-color: var(--omni) !important;
+}
+
+/* ---------------------------------------------------------- dbc.Card / panels */
+.card {
+  border: 1px solid var(--line) !important;
+  border-radius: 16px !important;
+  box-shadow: var(--shadow-sm) !important;
+  background: var(--panel) !important;
+}
+.card-body {
+  padding: 18px !important;
+}
+.card h6 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+  letter-spacing: -.005em;
+  margin-bottom: 12px;
+}
+
+/* ---------------------------------------------------------- KPI cards */
+.kpi-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow: var(--shadow-sm);
+  min-height: 130px;
+  position: relative;
+  border-top: 3px solid var(--line);
+}
+.kpi-card.headline { border-top-color: var(--omni); }
+.kpi-card.good     { border-top-color: var(--good); }
+.kpi-card.bad      { border-top-color: var(--bad);  }
+.kpi-card.warn     { border-top-color: var(--warn); }
+
+.kpi-card .k-label {
+  font-size: 10.5px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 800;
+  margin-bottom: 10px;
+}
+.kpi-card .k-value {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: -.01em;
+  color: var(--ink);
+  line-height: 1.05;
+  margin-bottom: 4px;
+}
+.kpi-card .k-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 12px;
+}
+.kpi-card .k-sub-label {
+  color: var(--muted);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-weight: 700;
+}
+.kpi-card .k-sub-value {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------- tables (dash_table) */
+.dash-table-container {
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.dash-spreadsheet thead th {
+  background: var(--panel) !important;
+  color: var(--muted) !important;
+  font-size: 10.5px !important;
+  font-weight: 800 !important;
+  letter-spacing: .08em !important;
+  text-transform: uppercase !important;
+  border-bottom: 1px solid var(--line) !important;
+  padding: 10px 8px !important;
+}
+.dash-cell {
+  font-size: 12.5px !important;
+  color: var(--ink) !important;
+  padding: 8px !important;
+}
+.dash-spreadsheet tr:hover td {
+  background: var(--omni-soft) !important;
+}
+
+/* ---------------------------------------------------------- buttons */
+.btn {
+  border-radius: 10px !important;
+  font-size: 13px !important;
+  font-weight: 600 !important;
+  padding: 9px 16px !important;
+  transition: all .12s ease !important;
+}
+.btn-primary {
+  background: var(--omni) !important;
+  border-color: var(--omni) !important;
+}
+.btn-primary:hover, .btn-primary:focus {
+  background: var(--accent) !important;
+  border-color: var(--accent) !important;
+  box-shadow: 0 6px 14px rgba(26, 77, 140, .25) !important;
+}
+.btn-secondary {
+  background: var(--panel) !important;
+  border-color: var(--line) !important;
+  color: var(--ink) !important;
+}
+.btn-secondary:hover, .btn-secondary:focus {
+  background: var(--omni-soft) !important;
+  border-color: var(--accent-soft) !important;
+  color: var(--omni) !important;
+}
+
+/* ---------------------------------------------------------- small detail polish */
+hr {
+  border-top: 1px solid var(--line);
+  opacity: 1;
+  margin: 18px 0;
+}
+.text-muted {
+  color: var(--muted) !important;
+}
+details summary {
+  cursor: pointer;
+  color: var(--omni);
+  font-size: 12.5px;
+  font-weight: 600;
+  padding: 6px 0;
+}
+details summary:hover {
+  color: var(--accent);
+}
