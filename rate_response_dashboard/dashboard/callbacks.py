@@ -24,7 +24,8 @@ from src import metrics
 from src.build_mart import list_partition_months, read_mart
 
 PCT_METRICS = {
-    "actual_response_rate", "expected_rr_trm", "expected_rr_xpm", "board_rate",
+    "actual_response_rate", "actual_board_rate",
+    "expected_rr_trm", "expected_rr_xpm",
 }
 RATIO_METRICS = {"actual_vs_expected_trm", "actual_vs_expected_xpm"}
 COUNT_METRICS = {"volume", "responders", "Boards"}
@@ -129,12 +130,15 @@ def register_callbacks(app, cfg: dict) -> None:
 
     # ----------------------------------------------------------- executive
     @app.callback(
+        Output("exec-latest-month-badge", "children"),
         Output("kpi-vol-latest", "children"),
         Output("kpi-vol-overall", "children"),
         Output("kpi-resp-latest", "children"),
         Output("kpi-resp-overall", "children"),
         Output("kpi-boards-latest", "children"),
         Output("kpi-boards-overall", "children"),
+        Output("kpi-abr-latest", "children"),
+        Output("kpi-abr-overall", "children"),
         Output("kpi-arr-latest", "children"),
         Output("kpi-arr-overall", "children"),
         Output("kpi-trm-latest", "children"),
@@ -143,8 +147,6 @@ def register_callbacks(app, cfg: dict) -> None:
         Output("kpi-xpm-overall", "children"),
         Output("kpi-aoe-latest", "children"),
         Output("kpi-aoe-overall", "children"),
-        Output("kpi-br-latest", "children"),
-        Output("kpi-br-overall", "children"),
         Output("exec-trend-chart", "figure"),
         Input("tabs", "active_tab"),
     )
@@ -152,7 +154,7 @@ def register_callbacks(app, cfg: dict) -> None:
         df = load_mart(cfg)
         if df.is_empty():
             blank = {"data": [], "layout": {"title": "No data"}}
-            return ("—",) * 16 + (blank,)
+            return ("—",) + ("—",) * 16 + (blank,)
 
         latest_m = _latest_month(df)
         latest_df = df.filter(pl.col("campaign_month") == latest_m)
@@ -168,8 +170,8 @@ def register_callbacks(app, cfg: dict) -> None:
         trend = metrics.monthly_trend(df).to_pandas().sort_values("campaign_month")
         long = trend.melt(
             id_vars="campaign_month",
-            value_vars=["actual_response_rate", "expected_rr_trm",
-                        "expected_rr_xpm", "board_rate"],
+            value_vars=["actual_board_rate", "actual_response_rate",
+                        "expected_rr_trm", "expected_rr_xpm"],
             var_name="metric", value_name="value",
         )
         fig = px.line(
@@ -189,14 +191,15 @@ def register_callbacks(app, cfg: dict) -> None:
         )
 
         return (
+            latest_m or "—",
             L("volume", _fmt_count), O("volume", _fmt_count),
             L("responders", _fmt_count), O("responders", _fmt_count),
             L("Boards", _fmt_count), O("Boards", _fmt_count),
+            L("actual_board_rate", _fmt_pct), O("actual_board_rate", _fmt_pct),
             L("actual_response_rate", _fmt_pct), O("actual_response_rate", _fmt_pct),
             L("expected_rr_trm", _fmt_pct), O("expected_rr_trm", _fmt_pct),
             L("expected_rr_xpm", _fmt_pct), O("expected_rr_xpm", _fmt_pct),
             L("actual_vs_expected_trm", _fmt_ratio), O("actual_vs_expected_trm", _fmt_ratio),
-            L("board_rate", _fmt_pct), O("board_rate", _fmt_pct),
             fig,
         )
 

@@ -72,7 +72,7 @@ dashboard:
   small_cell_threshold: 100
   # Default dimensions/metrics shown in pivot tab.
   default_row_dim: "vs_band"
-  default_metric: "actual_response_rate"
+  default_metric: "actual_board_rate"
 
 # Catalog of dimensions and metrics exposed in the UI. Order matters.
 catalog:
@@ -93,12 +93,12 @@ catalog:
     - volume
     - responders
     - Boards
+    - actual_board_rate       # primary headline rate
     - actual_response_rate
     - expected_rr_trm
     - expected_rr_xpm
     - actual_vs_expected_trm
     - actual_vs_expected_xpm
-    - board_rate
 
 logging:
   level: "INFO"

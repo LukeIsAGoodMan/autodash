@@ -109,17 +109,19 @@ def section_header(text: str, sub: str | None = None) -> html.Div:
 
 # ---------------------------------------------------------------- tab builders
 def tab_executive() -> dbc.Tab:
+    # Row 1 (headline): counts + the headline rate (actual_board_rate)
     kpis_row1 = dbc.Row([
         dbc.Col(kpi_card_dual("Total volume", "kpi-vol-latest", "kpi-vol-overall"), md=3),
         dbc.Col(kpi_card_dual("Responders", "kpi-resp-latest", "kpi-resp-overall"), md=3),
         dbc.Col(kpi_card_dual("Boards", "kpi-boards-latest", "kpi-boards-overall"), md=3),
-        dbc.Col(kpi_card_dual("Actual response rate", "kpi-arr-latest", "kpi-arr-overall"), md=3),
+        dbc.Col(kpi_card_dual("Actual board rate", "kpi-abr-latest", "kpi-abr-overall"), md=3),
     ], className="g-3")
+    # Row 2 (calibration): response-rate family
     kpis_row2 = dbc.Row([
+        dbc.Col(kpi_card_dual("Actual response rate", "kpi-arr-latest", "kpi-arr-overall"), md=3),
         dbc.Col(kpi_card_dual("Expected RR (TRM)", "kpi-trm-latest", "kpi-trm-overall"), md=3),
         dbc.Col(kpi_card_dual("Expected RR (XPM)", "kpi-xpm-latest", "kpi-xpm-overall"), md=3),
         dbc.Col(kpi_card_dual("Actual / Expected (TRM)", "kpi-aoe-latest", "kpi-aoe-overall"), md=3),
-        dbc.Col(kpi_card_dual("Board rate", "kpi-br-latest", "kpi-br-overall"), md=3),
     ], className="g-3 mt-3")
 
     trend = dbc.Card(dbc.CardBody([
@@ -128,14 +130,31 @@ def tab_executive() -> dbc.Tab:
     ]), className="mt-4", style={"borderRadius": "10px", "border": "none",
                                   "boxShadow": CARD_SHADOW})
 
+    # Dynamic section header: shows the actual latest month (populated by callback)
+    dynamic_header = html.Div([
+        html.H5([
+            "Latest month ",
+            html.Span(id="exec-latest-month-badge",
+                      className="badge",
+                      style={"backgroundColor": ACCENT, "color": "#ffffff",
+                             "fontSize": "14px", "padding": "4px 10px",
+                             "borderRadius": "6px", "marginLeft": "4px",
+                             "marginRight": "4px"}),
+            " at a glance",
+        ], style=SECTION_HEADER_STYLE),
+        html.Div(
+            "Big number is the latest month; smaller line is the all-month total.",
+            className="text-muted small",
+            style={"marginLeft": "14px", "marginBottom": "10px"},
+        ),
+    ])
+
     return dbc.Tab(
         label="Executive Summary",
         tab_id="tab-exec",
         label_style=TAB_LABEL_STYLE,
         children=html.Div([
-            section_header("Latest month at a glance",
-                           "Headline metrics for the most recent campaign month, "
-                           "with all-time context."),
+            dynamic_header,
             kpis_row1,
             kpis_row2,
             section_header("Monthly trend"),
@@ -335,7 +354,7 @@ def tab_export(cfg: dict) -> dbc.Tab:
                 html.Li("actual_response_rate = sum(responders) / sum(volume)"),
                 html.Li("expected_rr_trm = sum(expected_responses) / sum(volume)"),
                 html.Li("expected_rr_xpm = sum(expected_responses_xpm) / sum(volume)"),
-                html.Li("board_rate = sum(Boards) / sum(volume)"),
+                html.Li("actual_board_rate = sum(Boards) / sum(volume)"),
                 html.Li("actual_vs_expected_* = actual_response_rate / expected_rr_*"),
                 html.Li("All rates are recomputed from sums. Rates are never averaged."),
             ], className="small"),

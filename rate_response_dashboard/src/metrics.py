@@ -26,12 +26,12 @@ METRIC_COLUMNS = [
     "volume",
     "responders",
     "Boards",
+    "actual_board_rate",
     "actual_response_rate",
     "expected_rr_trm",
     "expected_rr_xpm",
     "actual_vs_expected_trm",
     "actual_vs_expected_xpm",
-    "board_rate",
 ]
 
 
@@ -70,9 +70,9 @@ def add_rate_columns(df: pl.DataFrame) -> pl.DataFrame:
     """Append the six derived rate columns to an aggregated frame."""
     return df.with_columns(
         actual_response_rate=_safe_div(pl.col(RESPONDERS), pl.col(VOLUME)),
+        actual_board_rate=_safe_div(pl.col(BOARDS), pl.col(VOLUME)),
         expected_rr_trm=_safe_div(pl.col(EXP_TRM), pl.col(VOLUME)),
         expected_rr_xpm=_safe_div(pl.col(EXP_XPM), pl.col(VOLUME)),
-        board_rate=_safe_div(pl.col(BOARDS), pl.col(VOLUME)),
     ).with_columns(
         actual_vs_expected_trm=_safe_div(pl.col("actual_response_rate"), pl.col("expected_rr_trm")),
         actual_vs_expected_xpm=_safe_div(pl.col("actual_response_rate"), pl.col("expected_rr_xpm")),
@@ -120,11 +120,11 @@ def suppress_small_cells(
     threshold: int = 100,
     metrics_to_mask: Iterable[str] = (
         "actual_response_rate",
+        "actual_board_rate",
         "expected_rr_trm",
         "expected_rr_xpm",
         "actual_vs_expected_trm",
         "actual_vs_expected_xpm",
-        "board_rate",
     ),
 ) -> pl.DataFrame:
     """Null out rate columns where volume is below threshold.

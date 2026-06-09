@@ -82,4 +82,4 @@ def test_suppression_nulls_rates_but_keeps_counts():
     small = masked.filter(pl.col("vs_band") == "B").sort("campaign_month")
     assert small["volume"][0] == 100
     assert small["actual_response_rate"][0] is None
-    assert small["board_rate"][0] is None
+    assert small["actual_board_rate"][0] is None
