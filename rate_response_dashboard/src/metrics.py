@@ -40,18 +40,18 @@ def _safe_div(num: pl.Expr, den: pl.Expr) -> pl.Expr:
     return pl.when(den.is_null() | (den == 0)).then(None).otherwise(num / den)
 
 
+_XPM_NN = "__xpm_nn"   # helper column: count of non-null xpm rows per group
+
+
 def aggregate_by(
     df: pl.DataFrame,
     group_dims: Iterable[str],
 ) -> pl.DataFrame:
     """Aggregate the mart over arbitrary dimensions, then derive rates.
 
-    This is the workhorse used by every dashboard tab. It does two things:
-      1. sum() the four base counts grouped by `group_dims`
-      2. compute the six rate metrics from those sums
-
-    Never operates on the SAS-side GRR/NRR — those are intentionally absent
-    from the mart.
+    The aggregation also tracks how many rows in each group carried a
+    non-null expected_responses_xpm so add_rate_columns can null-out the
+    XPM rate for groups that had no xpm data (rather than reporting 0).
     """
     group_dims = list(group_dims)
 
@@ -61,21 +61,36 @@ def aggregate_by(
         pl.col(BOARDS).sum().alias(BOARDS),
         pl.col(EXP_TRM).sum().alias(EXP_TRM),
         pl.col(EXP_XPM).sum().alias(EXP_XPM),
+        pl.col(EXP_XPM).is_not_null().sum().alias(_XPM_NN),
     )
 
-    return add_rate_columns(agg).sort(group_dims)
+    return add_rate_columns(agg).drop(_XPM_NN).sort(group_dims)
 
 
 def add_rate_columns(df: pl.DataFrame) -> pl.DataFrame:
-    """Append the six derived rate columns to an aggregated frame."""
-    return df.with_columns(
+    """Append the six derived rate columns to an aggregated frame.
+
+    When the helper column `__xpm_nn` is present, expected_rr_xpm and
+    actual_vs_expected_xpm are nulled for groups with no non-null xpm
+    rows (avoids confusing "0%" for months that simply don't have data).
+    """
+    df = df.with_columns(
         actual_response_rate=_safe_div(pl.col(RESPONDERS), pl.col(VOLUME)),
         actual_board_rate=_safe_div(pl.col(BOARDS), pl.col(VOLUME)),
         expected_rr_trm=_safe_div(pl.col(EXP_TRM), pl.col(VOLUME)),
         expected_rr_xpm=_safe_div(pl.col(EXP_XPM), pl.col(VOLUME)),
-    ).with_columns(
-        actual_vs_expected_trm=_safe_div(pl.col("actual_response_rate"), pl.col("expected_rr_trm")),
-        actual_vs_expected_xpm=_safe_div(pl.col("actual_response_rate"), pl.col("expected_rr_xpm")),
+    )
+    if _XPM_NN in df.columns:
+        df = df.with_columns(
+            expected_rr_xpm=pl.when(pl.col(_XPM_NN) > 0)
+                              .then(pl.col("expected_rr_xpm"))
+                              .otherwise(None),
+        )
+    return df.with_columns(
+        actual_vs_expected_trm=_safe_div(pl.col("actual_response_rate"),
+                                         pl.col("expected_rr_trm")),
+        actual_vs_expected_xpm=_safe_div(pl.col("actual_response_rate"),
+                                         pl.col("expected_rr_xpm")),
     )
 
 

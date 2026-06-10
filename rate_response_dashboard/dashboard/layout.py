@@ -343,6 +343,9 @@ def _filter_inner(cfg: dict, prefix: str) -> html.Div:
             dbc.Col(dcc.Dropdown(id=f"{prefix}-f-month-to",
                                  placeholder="to", clearable=True), width=6),
         ], className="g-1"),
+        dcc.Dropdown(id=f"{prefix}-f-months", multi=True,
+                     placeholder="or pick specific months (overrides range)",
+                     className="mt-1"),
     ], md=3)
 
     def col(label: str, suffix: str):

@@ -72,22 +72,25 @@ def _apply_filters(df: pl.DataFrame, filters: dict) -> pl.DataFrame:
 
 
 def _apply_month_window(df: pl.DataFrame,
+                        multi_months: list | None,
                         month_from: str | None,
                         month_to: str | None,
                         default_n: int) -> pl.DataFrame:
-    """Month range filter with a 'default to last N months' fallback.
+    """Month filter with three layered modes — pick the most specific one.
 
-    Behavior:
-      - Either side of the range is set -> explicit constraint; default
-        lookback is NOT additionally applied (user wants exactly that range).
-      - Both empty -> truncate to the most recent `default_n` months when
-        the mart has more, otherwise show everything.
+    Priority (highest first):
+      1. Multi-select 'specific months' chosen -> use exactly those (allows
+         arbitrary cherry-pick like ['2025-03', '2026-03'] for diff-of-years).
+      2. From/To range set on either side -> inclusive range.
+      3. Neither -> truncate to most recent `default_n` months when the mart
+         has more than that, otherwise show all.
 
-    `month_from` / `month_to` are inclusive 'YYYY-MM' strings.
-    Lexical comparison is safe because the partition key has fixed width.
+    No mode silently combines with another, so the UI is unambiguous.
     """
     if "campaign_month" not in df.columns:
         return df
+    if multi_months:
+        return df.filter(pl.col("campaign_month").is_in(list(multi_months)))
     if month_from or month_to:
         if month_from:
             df = df.filter(pl.col("campaign_month") >= month_from)
@@ -209,18 +212,33 @@ def register_callbacks(app, cfg: dict) -> None:
         # Overall KPIs and trend chart respect the lookback window so the
         # display doesn't grow unbounded when mart accumulates years.
         lookback = cfg["dashboard"].get("default_lookback_months", 24)
-        df = _apply_month_window(df_full, None, lookback)
+        df = _apply_month_window(df_full, None, None, None, lookback)
 
         latest_m = _latest_month(df_full)
         latest_df = df_full.filter(pl.col("campaign_month") == latest_m)
         k_latest = metrics.kpi_totals(latest_df)
         k_all = metrics.kpi_totals(df)
 
+        # Separate xpm KPI computation: when reporting the "All months"
+        # rate for XPM, divide only by the volume of months that actually
+        # carry xpm data — otherwise the rate is artificially diluted by
+        # months whose xpm column is null.
+        if "expected_responses_xpm" in df.columns:
+            df_xpm = df.filter(pl.col("expected_responses_xpm").is_not_null())
+        else:
+            df_xpm = df.clear()
+        k_xpm = metrics.kpi_totals(df_xpm) if not df_xpm.is_empty() else {}
+
+        XPM_KEYS = {"expected_rr_xpm", "actual_vs_expected_xpm"}
+
         def L(key, fmt):
             return fmt(k_latest.get(key))
 
         def O(key, fmt):
-            return fmt(k_all.get(key))
+            # All-months display uses the xpm-restricted denominator for
+            # xpm-family metrics; everything else uses the full lookback.
+            src = k_xpm if key in XPM_KEYS else k_all
+            return fmt(src.get(key))
 
         trend = metrics.monthly_trend(df).to_pandas().sort_values("campaign_month")
         long = trend.melt(
@@ -276,6 +294,7 @@ def register_callbacks(app, cfg: dict) -> None:
     _filter_cols = {
         "f-month-from": "campaign_month",
         "f-month-to":   "campaign_month",
+        "f-months":     "campaign_month",
         "f-vs":         "vs_band",
         "f-scorecard":  "scorecard",
         "f-prospect":   "Prospect_type",
@@ -305,6 +324,7 @@ def register_callbacks(app, cfg: dict) -> None:
         Input("pivot-suppress", "value"),
         Input("pivot-format", "value"),
         Input("pivot-color-mode", "value"),
+        Input("pivot-f-months", "value"),
         Input("pivot-f-month-from", "value"),
         Input("pivot-f-month-to", "value"),
         Input("pivot-f-vs", "value"),
@@ -316,11 +336,11 @@ def register_callbacks(app, cfg: dict) -> None:
         Input("pivot-f-mailed", "value"),
     )
     def _pivot(row_dim, metric, suppress, fmt, color_mode,
-               f_month_from, f_month_to,
+               f_months, f_month_from, f_month_to,
                f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
         lookback = cfg["dashboard"].get("default_lookback_months", 24)
         df = load_mart(cfg)
-        df = _apply_month_window(df, f_month_from, f_month_to, lookback)
+        df = _apply_month_window(df, f_months, f_month_from, f_month_to, lookback)
         df = _apply_filters(df, {
             "vs_band": f_vs,
             "scorecard": f_scorecard, "Prospect_type": f_prospect,
@@ -515,6 +535,7 @@ def register_callbacks(app, cfg: dict) -> None:
         Output("model-trm-range", "children"),
         Output("model-by-scorecard", "figure"),
         Output("model-sc-range", "children"),
+        Input("model-f-months", "value"),
         Input("model-f-month-from", "value"),
         Input("model-f-month-to", "value"),
         Input("model-f-vs", "value"),
@@ -525,11 +546,11 @@ def register_callbacks(app, cfg: dict) -> None:
         Input("model-f-fee", "value"),
         Input("model-f-mailed", "value"),
     )
-    def _model(f_month_from, f_month_to,
+    def _model(f_months, f_month_from, f_month_to,
                f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
         lookback = cfg["dashboard"].get("default_lookback_months", 24)
         df = load_mart(cfg)
-        df = _apply_month_window(df, f_month_from, f_month_to, lookback)
+        df = _apply_month_window(df, f_months, f_month_from, f_month_to, lookback)
         df = _apply_filters(df, {
             "vs_band": f_vs,
             "scorecard": f_scorecard, "Prospect_type": f_prospect,
@@ -583,16 +604,20 @@ def register_callbacks(app, cfg: dict) -> None:
                                 xaxis_title=None, legend_title="", height=400)
             xpm_range = "XPM months only · " + _chart_range_text(df_xpm)
 
-        # Chart 3: by month — actual vs expected_trm
+        # Chart 3: by month — actual vs expected_trm vs expected_xpm
+        # expected_rr_xpm is nulled by aggregate_by for months without xpm
+        # data, so the line is automatically discontinuous (no false zeros).
         by_m = metrics.monthly_trend(df).to_pandas().sort_values("campaign_month")
         m_long = by_m.melt(
             id_vars="campaign_month",
-            value_vars=["actual_response_rate", "expected_rr_trm"],
+            value_vars=["actual_response_rate", "expected_rr_trm", "expected_rr_xpm"],
             var_name="series", value_name="rate",
         )
+        # Drop rows where the rate is null so xpm gaps render as breaks.
+        m_long = m_long.dropna(subset=["rate"])
         f1 = px.line(m_long, x="campaign_month", y="rate", color="series",
                      markers=True,
-                     color_discrete_sequence=[PRIMARY, GOOD])
+                     color_discrete_sequence=[PRIMARY, GOOD, WARN])
         f1.update_traces(line=dict(width=2.5),
                          marker=dict(size=7, line=dict(color="#ffffff", width=1.5)))
         f1.update_layout(yaxis_tickformat=".1%", xaxis_title=None,
@@ -650,6 +675,7 @@ def register_callbacks(app, cfg: dict) -> None:
         Output("export-download", "data"),
         Input("btn-export-csv", "n_clicks"),
         Input("btn-export-xlsx", "n_clicks"),
+        State("export-f-months", "value"),
         State("export-f-month-from", "value"),
         State("export-f-month-to", "value"),
         State("export-f-vs", "value"),
@@ -662,17 +688,21 @@ def register_callbacks(app, cfg: dict) -> None:
         prevent_initial_call=True,
     )
     def _export(n_csv, n_xlsx,
-                f_month_from, f_month_to,
+                f_months, f_month_from, f_month_to,
                 f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
         from dash import ctx
         if not ctx.triggered_id:
             return no_update
         # Export respects the exact user range; no default lookback truncation.
+        # Same priority as the dashboard: multi-select wins over From/To.
         df = load_mart(cfg)
-        if f_month_from:
-            df = df.filter(pl.col("campaign_month") >= f_month_from)
-        if f_month_to:
-            df = df.filter(pl.col("campaign_month") <= f_month_to)
+        if f_months:
+            df = df.filter(pl.col("campaign_month").is_in(list(f_months)))
+        elif f_month_from or f_month_to:
+            if f_month_from:
+                df = df.filter(pl.col("campaign_month") >= f_month_from)
+            if f_month_to:
+                df = df.filter(pl.col("campaign_month") <= f_month_to)
         df = _apply_filters(df, {
             "vs_band": f_vs,
             "scorecard": f_scorecard, "Prospect_type": f_prospect,
