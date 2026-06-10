@@ -84,17 +84,50 @@ def discard_tmp_partition(mart_dir: str | Path, cm: CampaignMonth) -> None:
 
 
 # --------------------------------------------------------------- mart reads
+# Numeric metric columns we explicitly cast to Float64 at read time so partitions
+# written under different schema versions can be unioned safely.
+_NUMERIC_MART_COLS = [
+    "volume", "responders", "Boards",
+    "expected_responses", "expected_responses_xpm",
+]
+
+
 def read_mart(mart_dir: str | Path) -> pl.DataFrame:
     """Scan all partitions into a single Polars DataFrame.
 
-    The mart is small post-aggregation (typically O(10^4) per month). Reading
-    eagerly is fine and lets us use polars expressions directly downstream.
-    Switch to scan_parquet + collect() if it ever grows past a few million rows.
+    Reads each partition eagerly and harmonizes numeric column dtypes
+    (Int64 → Float64) before concatenating. This protects against schema
+    drift across partitions — e.g. partitions ingested before the xpm/null
+    handling fix stored `volume` as Int64, while newer ingests store it as
+    Float64 (because the prepare step now casts unconditionally). A naive
+    `pl.scan_parquet(..., hive_partitioning=True)` would fail with
+    `SchemaError: data type mismatch for column volume`.
+
+    Mart is small (O(10^4) per month × 17 months ≈ 100k rows), so the
+    per-partition read cost is negligible.
     """
     mart_dir = Path(mart_dir)
-    pattern = str(mart_dir / f"{PARTITION_PREFIX}*" / ROLLUP_FILENAME)
-    lf = pl.scan_parquet(pattern, hive_partitioning=True)
-    return lf.collect()
+    pq_files = sorted(mart_dir.glob(f"{PARTITION_PREFIX}*/{ROLLUP_FILENAME}"))
+    if not pq_files:
+        return pl.DataFrame()
+
+    frames: list[pl.DataFrame] = []
+    for f in pq_files:
+        df = pl.read_parquet(str(f))
+        # Hive partitioning would normally inject campaign_month from the path,
+        # but the prepare step already added it as a column; keep a fallback.
+        if "campaign_month" not in df.columns:
+            cm = f.parent.name.split("=", 1)[1]
+            df = df.with_columns(pl.lit(cm).alias("campaign_month"))
+        for c in _NUMERIC_MART_COLS:
+            if c in df.columns and df[c].dtype != pl.Float64:
+                df = df.with_columns(pl.col(c).cast(pl.Float64, strict=False))
+        frames.append(df)
+
+    # diagonal_relaxed = union of all columns + dtype coercion across frames,
+    # so partitions with slightly different column sets (e.g. one missing
+    # expected_responses_xpm entirely) still concat cleanly.
+    return pl.concat(frames, how="diagonal_relaxed")
 
 
 def list_partition_months(mart_dir: str | Path) -> list[str]:

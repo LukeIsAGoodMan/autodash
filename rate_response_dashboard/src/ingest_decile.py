@@ -174,11 +174,35 @@ def run_decile_ingest(cfg: dict, force: bool = False) -> dict:
 
 
 # ------------------------------------------------------------- mart read
+_NUMERIC_DECILE_COLS = ["volume", "responders", "Boards"]
+
+
 def read_decile_mart(decile_mart_dir: str | Path) -> pl.DataFrame:
-    """Scan decile partitions. Returns empty DF if no partitions exist."""
+    """Scan decile partitions, harmonizing numeric dtypes across files.
+
+    Same approach as build_mart.read_mart — eager per-partition read + cast
+    to Float64 before concat — so partitions written under different schema
+    versions union without SchemaError.
+    """
     p = Path(decile_mart_dir)
-    pattern = str(p / f"{PARTITION_PREFIX}*" / DECILE_FILENAME)
-    try:
-        return pl.scan_parquet(pattern, hive_partitioning=True).collect()
-    except Exception:
+    pq_files = sorted(p.glob(f"{PARTITION_PREFIX}*/{DECILE_FILENAME}"))
+    if not pq_files:
         return pl.DataFrame()
+
+    frames: list[pl.DataFrame] = []
+    for f in pq_files:
+        try:
+            df = pl.read_parquet(str(f))
+        except Exception:
+            continue
+        if "campaign_month" not in df.columns:
+            cm = f.parent.name.split("=", 1)[1]
+            df = df.with_columns(pl.lit(cm).alias("campaign_month"))
+        for c in _NUMERIC_DECILE_COLS:
+            if c in df.columns and df[c].dtype != pl.Float64:
+                df = df.with_columns(pl.col(c).cast(pl.Float64, strict=False))
+        frames.append(df)
+
+    if not frames:
+        return pl.DataFrame()
+    return pl.concat(frames, how="diagonal_relaxed")
