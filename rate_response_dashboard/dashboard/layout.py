@@ -77,6 +77,10 @@ def hero() -> html.Div:
                 html.Span([
                     html.Span("Latest month ", className="tag-label"),
                     html.Span(id="hero-latest", children="—"),
+                    # Maturity badge appended by callback: 'full' (green)
+                    # or 'partial' (amber). Hidden when no data.
+                    html.Span(id="hero-maturity", children="",
+                              style={"marginLeft": "6px"}),
                 ], className="tag"),
                 html.Span([
                     html.Span("Months in mart ", className="tag-label"),
@@ -271,7 +275,10 @@ def tab_model(cfg: dict) -> dbc.Tab:
 
 
 def tab_rankorder() -> dbc.Tab:
-    """Decile-grain rank-order analytics: KS, capture curve, decile table."""
+    """Decile-grain rank-order analytics. The scorecard filter routes between
+    two underlying marts: 'All scorecards' uses the portfolio mart (20 deciles
+    across all customers); a specific scorecard uses the scorecard mart
+    (10 deciles within that scorecard)."""
     controls = html.Div([
         dbc.Row([
             dbc.Col([
@@ -284,15 +291,27 @@ def tab_rankorder() -> dbc.Tab:
                 dcc.Dropdown(id="rank-f-scorecard", clearable=False,
                              placeholder="(all)"),
             ], md=3),
+            dbc.Col([
+                html.Div(id="rank-mart-mode", className="chart-meta",
+                         style={"marginTop": "22px"}),
+            ], md=6),
         ], className="g-3"),
     ], className="controls-bar")
 
-    kpi_row = dbc.Row([
-        dbc.Col(kpi_card_single("KS",                "rank-ks",     variant="headline"), md=3),
-        dbc.Col(kpi_card_single("Top decile lift",   "rank-top-lift"),                   md=3),
-        dbc.Col(kpi_card_single("Total volume",      "rank-volume"),                     md=3),
-        dbc.Col(kpi_card_single("Total responders",  "rank-resp"),                       md=3),
+    # Row 1 (model headline): rank-order quality metrics.
+    kpi_row1 = dbc.Row([
+        dbc.Col(kpi_card_single("KS",              "rank-ks",       variant="headline"), md=3),
+        dbc.Col(kpi_card_single("AUC",             "rank-auc"),                          md=3),
+        dbc.Col(kpi_card_single("Gini",            "rank-gini"),                         md=3),
+        dbc.Col(kpi_card_single("Top decile lift", "rank-top-lift"),                     md=3),
     ], className="g-3")
+    # Row 2 (business context).
+    kpi_row2 = dbc.Row([
+        dbc.Col(kpi_card_single("Total volume",     "rank-volume"),     md=3),
+        dbc.Col(kpi_card_single("Total responders", "rank-resp"),       md=3),
+        dbc.Col(kpi_card_single("Total Boards",     "rank-boards"),     md=3),
+        dbc.Col(kpi_card_single("Board rate",       "rank-board-rate"), md=3),
+    ], className="g-3 mt-3")
 
     capture = dbc.Card(dbc.CardBody([
         html.H6("Cumulative capture vs cumulative volume"),
@@ -332,14 +351,19 @@ def tab_rankorder() -> dbc.Tab:
         tab_id="tab-rankorder",
         children=html.Div([
             controls,
-            section_header("Headline"),
-            kpi_row,
+            section_header("Model performance"),
+            kpi_row1,
+            section_header("Business context"),
+            kpi_row2,
             section_header("Capture & calibration"),
             capture,
             rr_decile,
             section_header("Stability"),
             ks_trend,
-            section_header("Detail"),
+            section_header("Decile detail",
+                           "Misrank=1 flags rows whose response rate exceeds "
+                           "the row above (a rank-order violation). KS column "
+                           "shows the per-decile |cum_capture − cum_non_resp_pct|."),
             decile_table,
         ], className="tab-content-area"),
     )
@@ -356,6 +380,12 @@ def tab_dq() -> dbc.Tab:
             {"if": {"row_index": "odd"}, "backgroundColor": "#fafbfd"},
             {"if": {"filter_query": "{has_xpm} = false", "column_id": "has_xpm"},
              "backgroundColor": "#fdecea", "color": "#922b21", "fontWeight": "600"},
+            {"if": {"filter_query": "{maturity_status} = partial",
+                    "column_id": "maturity_status"},
+             "backgroundColor": "#fef3e2", "color": "#8a5a13", "fontWeight": "600"},
+            {"if": {"filter_query": "{maturity_status} = full",
+                    "column_id": "maturity_status"},
+             "backgroundColor": "#e3f5e8", "color": "#1d5e3a", "fontWeight": "600"},
         ],
     )
     return dbc.Tab(

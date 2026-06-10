@@ -10,7 +10,10 @@ paths:
   # backslashes literally.
   rollup_csv_dir: '\\fnbm.corp\share\Risk\Modeling\Model Development\Vendor Engagements\Active\01 - Adhoc\2026Q2_RR_Anlaysis\FilterCRS'
   mart_dir: "./data/mart/rate_response_rollup"
-  decile_mart_dir: "./data/mart/decile_rollup"
+  # Decile marts (P4): scorecard-level (10 deciles per scorecard) and
+  # portfolio-level (20 deciles across all customers).
+  decile_sc_mart_dir:   "./data/mart/decile_sc"
+  decile_port_mart_dir: "./data/mart/decile_port"
   logs_dir: "./data/logs"
   sas_pipeline_file: "./sas/rate_response_pipeline.sas"
 
@@ -67,14 +70,27 @@ mart:
     - GRR
     - NRR
 
-  # Decile-grain mart (P4). Schema is much narrower than the main rollup
-  # because the SAS %rollup_decile macro emits only counts.
-  decile_required_columns:
+  # Decile rollup schemas. Both share volume/responders/Boards + a `decile`
+  # bin; the scorecard-level rollup also carries a `scorecard` dimension.
+  decile_sc_required_columns:
     - scorecard
-    - total_decile
+    - decile
     - volume
     - responders
     - Boards
+  decile_port_required_columns:
+    - decile
+    - volume
+    - responders
+    - Boards
+
+  # A campaign-month partition is 'full' when its SAS rerun finished at
+  # least this many months after the end of the campaign month. Before that
+  # it's 'partial' — responders and boards are still arriving from the
+  # offer drop. Maturity is taken from the latest source_modified_time in
+  # load_log.csv for that campaign_month, falling back to partition mtime
+  # if no load_log entry exists.
+  maturity_threshold_months: 3
 
 dashboard:
   title: "Rate Response Dashboard"

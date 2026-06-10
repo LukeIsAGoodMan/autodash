@@ -1,41 +1,72 @@
-"""Decile-grain ingest. Mirrors src.ingest_rollups but for the smaller
-`exp_<MMMYY>_decile.csv` files that SAS %rollup_decile emits.
+"""Decile-grain ingest. Handles two SAS output streams:
 
-Mart layout:
-    data/mart/decile_rollup/
-        campaign_month=2025-01/decile.parquet
-        campaign_month=2025-02/decile.parquet
-        ...
+  - exp_<MMMYY>_decile_sc.csv   → data/mart/decile_sc/    (scorecard × 10 deciles)
+  - exp_<MMMYY>_decile_port.csv → data/mart/decile_port/  (20 deciles, no scorecard split)
 
 Each parquet has columns:
-    campaign_month  scorecard  total_decile  volume  responders  Boards
+    campaign_month  [scorecard]  decile  volume  responders  Boards
 
-Best-effort by design: if there are no decile CSVs (e.g. mart was built
-before SAS started emitting them), this returns a zero-action summary
-without raising. Old months can be backfilled later by re-running
-`scripts/run_monthly_refresh.py --month YYYY-MM` once the new SAS macro is
-installed on the server.
+A small `_DECILE_KINDS` table at module top declares both streams; the rest
+of the module is parameterized so adding more decile variants later is a
+one-line config change.
+
+Best-effort by design: if SAS hasn't emitted a given file kind yet, the
+loop quietly reports zero actions for it and proceeds.
 """
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 import polars as pl
 
 from .ingest_rollups import _canonicalize_columns, _load_csv
-from .utils import CampaignMonth, ensure_dir, parse_decile_filename
+from .utils import (
+    CampaignMonth,
+    ensure_dir,
+    parse_decile_port_filename,
+    parse_decile_sc_filename,
+)
 
 log = logging.getLogger(__name__)
 
 PARTITION_PREFIX = "campaign_month="
-DECILE_FILENAME = "decile.parquet"
+PARQUET_FILENAME = "decile.parquet"
 
 Action = Literal["add", "replace", "skip"]
+
+
+# --- declare both decile streams in one place -----------------------------
+@dataclass(frozen=True)
+class DecileKind:
+    name: str                            # short label for logs
+    csv_glob: str                        # pattern under rollup_csv_dir
+    parse: Callable[[str], CampaignMonth | None]
+    mart_path_key: str                   # key under cfg["paths"]
+    required_cols_key: str               # key under cfg["mart"]
+
+
+_DECILE_KINDS: list[DecileKind] = [
+    DecileKind(
+        name="decile_sc",
+        csv_glob="exp_*_decile_sc.csv",
+        parse=parse_decile_sc_filename,
+        mart_path_key="decile_sc_mart_dir",
+        required_cols_key="decile_sc_required_columns",
+    ),
+    DecileKind(
+        name="decile_port",
+        csv_glob="exp_*_decile_port.csv",
+        parse=parse_decile_port_filename,
+        mart_path_key="decile_port_mart_dir",
+        required_cols_key="decile_port_required_columns",
+    ),
+]
 
 
 @dataclass
@@ -48,57 +79,51 @@ class DecilePlan:
     reason: str
 
 
-# ------------------------------------------------------------- planning
+# ---------------------------------------------------------- planning helpers
 def _partition_dir(mart_dir: Path, cm: CampaignMonth) -> Path:
     return mart_dir / f"{PARTITION_PREFIX}{cm.iso}"
 
 
 def _partition_mtime(mart_dir: Path, cm: CampaignMonth) -> datetime | None:
-    p = _partition_dir(mart_dir, cm) / DECILE_FILENAME
+    p = _partition_dir(mart_dir, cm) / PARQUET_FILENAME
     if not p.exists():
         return None
     return datetime.fromtimestamp(p.stat().st_mtime)
 
 
-def plan_decile_ingestion(cfg: dict, force: bool = False) -> list[DecilePlan]:
-    """Scan rollup_csv_dir for exp_*_decile.csv and decide per-month action."""
+def _plan_one_kind(cfg: dict, kind: DecileKind, force: bool) -> list[DecilePlan]:
     csv_dir = Path(cfg["paths"]["rollup_csv_dir"])
-    mart_dir = Path(cfg["paths"]["decile_mart_dir"])
-
-    log.info("Scanning for decile CSVs in %s", csv_dir)
+    mart_dir = Path(cfg["paths"][kind.mart_path_key])
     if not csv_dir.exists():
-        log.warning("rollup_csv_dir does not exist: %s", csv_dir)
         return []
-
     plans: list[DecilePlan] = []
-    for path in sorted(csv_dir.glob("exp_*_decile.csv")):
-        cm = parse_decile_filename(path.name)
+    for path in sorted(csv_dir.glob(kind.csv_glob)):
+        cm = kind.parse(path.name)
         if cm is None:
             continue
         csv_mtime = datetime.fromtimestamp(path.stat().st_mtime)
         part_mtime = _partition_mtime(mart_dir, cm)
-
         if force and part_mtime is not None:
-            action, reason = "replace", "forced re-ingest (--force)"
+            action, reason = "replace", "forced (--force)"
         elif part_mtime is None:
-            action, reason = "add", "new month — no existing partition"
+            action, reason = "add", "new month"
         elif csv_mtime > part_mtime:
-            action, reason = "replace", f"csv newer than partition ({csv_mtime} > {part_mtime})"
+            action, reason = "replace", f"csv newer ({csv_mtime} > {part_mtime})"
         else:
-            action, reason = "skip", "csv not newer than partition"
+            action, reason = "skip", "csv not newer"
         plans.append(DecilePlan(cm, path, csv_mtime, part_mtime, action, reason))
-
     return plans
 
 
-# ------------------------------------------------------------- execution
-def _prepare(df: pl.DataFrame, cm: CampaignMonth, cfg: dict) -> pl.DataFrame:
-    """Canonicalize column case, coerce integer dims, attach campaign_month."""
-    canonical = list(cfg["mart"].get("decile_required_columns") or [])
-    df = _canonicalize_columns(df, canonical)
-    for c in ("scorecard", "total_decile"):
+# ---------------------------------------------------------- per-kind execution
+def _prepare(df: pl.DataFrame, cm: CampaignMonth, required: list[str]) -> pl.DataFrame:
+    df = _canonicalize_columns(df, required)
+    for c in ("scorecard", "decile"):
         if c in df.columns:
             df = df.with_columns(pl.col(c).cast(pl.Int32, strict=False))
+    for c in ("volume", "responders", "Boards"):
+        if c in df.columns and df[c].dtype != pl.Float64:
+            df = df.with_columns(pl.col(c).cast(pl.Float64, strict=False))
     df = df.with_columns(pl.lit(cm.iso).alias("campaign_month"))
     return df
 
@@ -116,13 +141,12 @@ def _validate(df: pl.DataFrame, required: list[str]) -> tuple[bool, str]:
 
 
 def _safe_write(df: pl.DataFrame, mart_dir: Path, cm: CampaignMonth) -> Path:
-    """tmp dir → atomic swap. Same pattern as build_mart.write_partition_safely."""
     final = _partition_dir(mart_dir, cm)
     tmp = mart_dir / f"{PARTITION_PREFIX}{cm.iso}__tmp"
     if tmp.exists():
         shutil.rmtree(tmp)
     ensure_dir(tmp)
-    out = tmp / DECILE_FILENAME
+    out = tmp / PARQUET_FILENAME
     df.write_parquet(str(out), compression="snappy")
     log.info("wrote %s (%d rows)", out, df.height)
     if final.exists():
@@ -131,64 +155,59 @@ def _safe_write(df: pl.DataFrame, mart_dir: Path, cm: CampaignMonth) -> Path:
     return final
 
 
-def execute_decile_plan(plan: list[DecilePlan], cfg: dict) -> dict:
-    """Run the plan. Returns a small summary dict for the caller to log."""
-    mart_dir = ensure_dir(cfg["paths"]["decile_mart_dir"])
-    required = cfg["mart"].get("decile_required_columns") or []
+def _execute_one_kind(plan: list[DecilePlan], cfg: dict, kind: DecileKind) -> dict:
+    mart_dir = ensure_dir(cfg["paths"][kind.mart_path_key])
+    required = cfg["mart"].get(kind.required_cols_key) or []
     summary = {"added": 0, "replaced": 0, "skipped": 0, "failed": 0}
 
     for p in plan:
         if p.action == "skip":
             summary["skipped"] += 1
-            log.info("[skip-decile] %s: %s", p.cm.iso, p.reason)
+            log.info("[skip-%s] %s: %s", kind.name, p.cm.iso, p.reason)
             continue
         try:
             raw = _load_csv(p.csv_path)
-            df = _prepare(raw, p.cm, cfg)
+            df = _prepare(raw, p.cm, required)
             ok, why = _validate(df, required)
             if not ok:
                 summary["failed"] += 1
-                log.error("[fail-decile] %s: %s", p.cm.iso, why)
+                log.error("[fail-%s] %s: %s", kind.name, p.cm.iso, why)
                 continue
             _safe_write(df, mart_dir, p.cm)
             status = "added" if p.action == "add" else "replaced"
             summary[status] += 1
-            log.info("[%s-decile] %s: %s", status, p.cm.iso, p.reason)
+            log.info("[%s-%s] %s: %s", status, kind.name, p.cm.iso, p.reason)
         except Exception as e:  # noqa: BLE001
             summary["failed"] += 1
-            log.exception("[fail-decile] %s: unexpected error: %s", p.cm.iso, e)
+            log.exception("[fail-%s] %s: %s", kind.name, p.cm.iso, e)
     return summary
 
 
+# ---------------------------------------------------------- public API
 def run_decile_ingest(cfg: dict, force: bool = False) -> dict:
-    """One-call entrypoint. Returns even when no decile CSVs are present."""
-    plan = plan_decile_ingestion(cfg, force=force)
-    if not plan:
-        log.info("No decile CSVs found — skipping decile ingest (P4 step).")
-        return {"added": 0, "replaced": 0, "skipped": 0, "failed": 0}
-    log.info("decile ingest plan: %d files (%s)", len(plan),
-             ", ".join(f"{p.cm.iso}:{p.action}" for p in plan))
-    summary = execute_decile_plan(plan, cfg)
-    log.info("decile ingest summary: %s", summary)
-    return summary
+    """Ingest both decile streams. Returns combined summary per kind."""
+    combined = {}
+    for kind in _DECILE_KINDS:
+        plan = _plan_one_kind(cfg, kind, force=force)
+        if not plan:
+            log.info("[%s] no CSVs found — skipping", kind.name)
+            combined[kind.name] = {"added": 0, "replaced": 0, "skipped": 0, "failed": 0}
+            continue
+        log.info("[%s] plan: %d files (%s)", kind.name, len(plan),
+                 ", ".join(f"{p.cm.iso}:{p.action}" for p in plan))
+        combined[kind.name] = _execute_one_kind(plan, cfg, kind)
+    return combined
 
 
-# ------------------------------------------------------------- mart read
+# ---------------------------------------------------------- mart reads
 _NUMERIC_DECILE_COLS = ["volume", "responders", "Boards"]
 
 
-def read_decile_mart(decile_mart_dir: str | Path) -> pl.DataFrame:
-    """Scan decile partitions, harmonizing numeric dtypes across files.
-
-    Same approach as build_mart.read_mart — eager per-partition read + cast
-    to Float64 before concat — so partitions written under different schema
-    versions union without SchemaError.
-    """
-    p = Path(decile_mart_dir)
-    pq_files = sorted(p.glob(f"{PARTITION_PREFIX}*/{DECILE_FILENAME}"))
+def _read_one_decile_mart(mart_dir: str | Path) -> pl.DataFrame:
+    p = Path(mart_dir)
+    pq_files = sorted(p.glob(f"{PARTITION_PREFIX}*/{PARQUET_FILENAME}"))
     if not pq_files:
         return pl.DataFrame()
-
     frames: list[pl.DataFrame] = []
     for f in pq_files:
         try:
@@ -202,7 +221,16 @@ def read_decile_mart(decile_mart_dir: str | Path) -> pl.DataFrame:
             if c in df.columns and df[c].dtype != pl.Float64:
                 df = df.with_columns(pl.col(c).cast(pl.Float64, strict=False))
         frames.append(df)
-
     if not frames:
         return pl.DataFrame()
     return pl.concat(frames, how="diagonal_relaxed")
+
+
+def read_decile_sc_mart(decile_sc_mart_dir: str | Path) -> pl.DataFrame:
+    """Scorecard-level decile mart (10 deciles per scorecard, per month)."""
+    return _read_one_decile_mart(decile_sc_mart_dir)
+
+
+def read_decile_port_mart(decile_port_mart_dir: str | Path) -> pl.DataFrame:
+    """Portfolio-level decile mart (20 deciles across all customers, per month)."""
+    return _read_one_decile_mart(decile_port_mart_dir)

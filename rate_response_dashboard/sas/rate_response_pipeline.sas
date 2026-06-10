@@ -232,23 +232,65 @@ quit;
 %mend;
 
 
-/* Additive macro: aggregates the per-customer trm finalresponse table at
-   the (scorecard, total_decile) grain so the dashboard can compute capture
-   rate and KS. Does NOT touch the existing %rollup macro or its output. */
-%macro rollup_decile(startdate, ds);
+/* Equal-volume decile rollups for the Rank Order tab.
+   - sc_decile : within each scorecard, equal-volume 10-tile by TRM_Score
+   - port_decile: across the whole portfolio, equal-volume 20-tile
+   PSI tiers (total_decile, sc1..sc4_decile) computed in %assign_psi_tier
+   remain untouched and still live on trm.&ds._finalresponse — they're just
+   no longer the basis for the dashboard rank-order analytics.
+*/
+%macro rank_deciles(ds);
+proc sort data=trm.&ds._finalresponse;
+    by scorecard;
+run;
+proc rank data=trm.&ds._finalresponse out=trm.&ds._finalresponse
+          groups=10 descending;
+    var TRM_Score;
+    by scorecard;
+    ranks sc_decile;
+run;
+proc rank data=trm.&ds._finalresponse out=trm.&ds._finalresponse
+          groups=20 descending;
+    var TRM_Score;
+    ranks port_decile;
+run;
+data trm.&ds._finalresponse;
+    set trm.&ds._finalresponse;
+    /* proc rank groups output is 0-based; shift to 1..N. Null score rows
+       keep null deciles and are filtered out by the rollup queries. */
+    if not missing(sc_decile)   then sc_decile   = sc_decile   + 1;
+    if not missing(port_decile) then port_decile = port_decile + 1;
+run;
+%mend rank_deciles;
+
+%macro rollup_decile_sc(ds);
 proc sql;
-    create table &ds._decile_rollup as
+    create table &ds._decile_sc as
         select scorecard,
-               total_decile,
-               count(*)                as volume,
-               sum(GrossResponse)      as responders,
-               sum(NetResponse)        as Boards
+               sc_decile          as decile,
+               count(*)           as volume,
+               sum(GrossResponse) as responders,
+               sum(NetResponse)   as Boards
         from trm.&ds._finalresponse
-        where total_decile is not null
-        group by scorecard, total_decile
-        order by scorecard, total_decile;
+        where sc_decile is not null
+        group by scorecard, sc_decile
+        order by scorecard, sc_decile;
 quit;
-%mend rollup_decile;
+%mend rollup_decile_sc;
+
+%macro rollup_decile_port(ds);
+proc sql;
+    create table &ds._decile_port as
+        select port_decile        as decile,
+               count(*)           as volume,
+               sum(GrossResponse) as responders,
+               sum(NetResponse)   as Boards
+        from trm.&ds._finalresponse
+        where port_decile is not null
+        group by port_decile
+        order by port_decile;
+quit;
+%mend rollup_decile_port;
 
 
 %macro run_one_month(reportdate);
@@ -275,11 +317,18 @@ quit;
         dbms=csv
         replace;
     run;
-    /* Decile-grain rollup for KS / capture analytics. Pure additive output
-       (no impact on the main exp_&labelname._rollup.csv produced above). */
-    %rollup_decile(&startdate., &labelname.);
-    proc export data=&labelname._decile_rollup
-        outfile="&folder./exp_&labelname._decile.csv"
+    /* Equal-volume decile rollups for the Rank Order tab.
+       Pure additive — main exp_&labelname._rollup.csv above is unaffected. */
+    %rank_deciles(&labelname.);
+    %rollup_decile_sc(&labelname.);
+    proc export data=&labelname._decile_sc
+        outfile="&folder./exp_&labelname._decile_sc.csv"
+        dbms=csv
+        replace;
+    run;
+    %rollup_decile_port(&labelname.);
+    proc export data=&labelname._decile_port
+        outfile="&folder./exp_&labelname._decile_port.csv"
         dbms=csv
         replace;
     run;

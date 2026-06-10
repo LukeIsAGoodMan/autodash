@@ -307,7 +307,10 @@ def execute_plan(plan: list[IngestPlan], cfg: dict) -> dict:
             append_load_log(log_path, row)
 
     rebuild_validation_summary(
-        mart_dir, Path(cfg["paths"]["logs_dir"]) / "validation_summary.csv"
+        mart_dir,
+        Path(cfg["paths"]["logs_dir"]) / "validation_summary.csv",
+        logs_dir=cfg["paths"]["logs_dir"],
+        maturity_threshold_months=cfg["mart"].get("maturity_threshold_months", 3),
     )
     log.info("ingest summary: %s", summary)
     return summary

@@ -130,38 +130,57 @@ def pivot_table(
 
 
 # ============================================================================
-# Decile-grain metrics (P4): KS, capture rate, lift.
-# Operate on the decile mart frame: columns
-#   campaign_month, scorecard, total_decile, volume, responders, Boards
+# Decile-grain metrics (P4): KS, capture rate, lift, misrank, AUC, Gini.
+#
+# Two mart shapes are supported via the `decile_col` parameter:
+#   - scorecard-level: columns campaign_month, scorecard, decile (1..10),
+#     volume, responders, Boards.  Pass decile_col="decile", scorecard=<int>.
+#   - portfolio-level: columns campaign_month, decile (1..20),
+#     volume, responders, Boards.  Pass decile_col="decile", scorecard=None.
+#
 # Convention: decile 1 = highest model score (most likely responders).
 # ============================================================================
+DECILE_COL = "decile"
+
 
 def decile_summary(
     df: pl.DataFrame,
     scorecard: int | None = None,
     campaign_month: str | None = None,
+    decile_col: str = DECILE_COL,
 ) -> pl.DataFrame:
-    """Return a per-decile summary with cumulative capture and lift.
+    """Return per-decile summary: counts, rates, cum_capture, lift, KS, misrank.
 
-    Filters by `scorecard` and/or `campaign_month` if provided. Sums across
-    everything else (so e.g. multi-month aggregation works when both are None).
+    `misrank` = 1 when this decile's response_rate is *higher* than the
+    previous decile's. For a well-behaved rank ordering (decile 1 should be
+    the best) we expect strict decrease; any 1 in this column flags a
+    rank-order violation between adjacent bins. The top decile (row 0) is
+    always 0 since there's nothing to compare it to.
+
+    `per_decile_ks` = |cum_capture − cum_non_resp_pct| at each decile; the
+    KS statistic is the max of this column.
     """
     out = df
     if scorecard is not None and "scorecard" in out.columns:
         out = out.filter(pl.col("scorecard") == scorecard)
     if campaign_month is not None and "campaign_month" in out.columns:
         out = out.filter(pl.col("campaign_month") == campaign_month)
-    if out.is_empty():
+    if out.is_empty() or decile_col not in out.columns:
         return pl.DataFrame()
 
-    by_dec = out.group_by("total_decile").agg(
-        pl.col("volume").sum().alias("volume"),
-        pl.col("responders").sum().alias("responders"),
-        pl.col("Boards").sum().alias("Boards"),
-    ).sort("total_decile")
+    by_dec = (
+        out.group_by(decile_col)
+           .agg(
+               pl.col("volume").sum().alias("volume"),
+               pl.col("responders").sum().alias("responders"),
+               pl.col("Boards").sum().alias("Boards"),
+           )
+           .sort(decile_col)
+    )
 
     total_v = by_dec["volume"].sum() or 0
     total_r = by_dec["responders"].sum() or 0
+    total_nr = (total_v - total_r) if total_v else 0
     overall_rr = (total_r / total_v) if total_v else None
 
     by_dec = by_dec.with_columns(
@@ -171,17 +190,21 @@ def decile_summary(
         cum_volume=pl.col("volume").cum_sum(),
         cum_responders=pl.col("responders").cum_sum(),
         cum_non_responders=pl.col("non_responders").cum_sum(),
-    )
-    by_dec = by_dec.with_columns(
+    ).with_columns(
         cum_volume_pct=_safe_div(pl.col("cum_volume"), pl.lit(total_v)),
         cum_capture=_safe_div(pl.col("cum_responders"), pl.lit(total_r)),
-        cum_non_resp_pct=_safe_div(pl.col("cum_non_responders"),
-                                   pl.lit(total_v - total_r)),
+        cum_non_resp_pct=_safe_div(pl.col("cum_non_responders"), pl.lit(total_nr)),
+    ).with_columns(
+        # Per-decile KS contribution (the table-wide KS is the max).
+        per_decile_ks=(pl.col("cum_capture") - pl.col("cum_non_resp_pct")).abs(),
+        # Misrank: this row's response_rate exceeds the previous row's (expected
+        # to be lower since decile 1 is best). Use shift; the top decile gets 0.
+        misrank=(
+            pl.col("response_rate") > pl.col("response_rate").shift(1)
+        ).cast(pl.Int8).fill_null(0),
     )
     if overall_rr is not None and overall_rr > 0:
-        by_dec = by_dec.with_columns(
-            lift=pl.col("response_rate") / overall_rr,
-        )
+        by_dec = by_dec.with_columns(lift=pl.col("response_rate") / overall_rr)
     else:
         by_dec = by_dec.with_columns(lift=pl.lit(None).cast(pl.Float64))
     return by_dec
@@ -191,25 +214,60 @@ def ks_value(
     df: pl.DataFrame,
     scorecard: int | None = None,
     campaign_month: str | None = None,
+    decile_col: str = DECILE_COL,
 ) -> float | None:
-    """KS = max( |cum_responders_pct − cum_non_responders_pct| ) across deciles.
+    """KS = max(|cum_capture − cum_non_resp_pct|) across deciles."""
+    s = decile_summary(df, scorecard, campaign_month, decile_col)
+    if s.is_empty() or "per_decile_ks" not in s.columns:
+        return None
+    mx = s["per_decile_ks"].max()
+    return float(mx) if mx is not None else None
 
-    Returns None when there is not enough data to compute (no responders or
-    no non-responders).
+
+def auc_value(
+    df: pl.DataFrame,
+    scorecard: int | None = None,
+    campaign_month: str | None = None,
+    decile_col: str = DECILE_COL,
+) -> float | None:
+    """Trapezoidal AUC under the ROC curve.
+
+    ROC: x = cumulative non-responder fraction, y = cumulative responder
+    fraction. We anchor at (0,0) and walk the cumulative arrays in decile
+    order, summing trapezoid areas. With perfect rank ordering AUC → 1.0;
+    random rank ordering → 0.5; perfectly reversed → 0.0.
     """
-    s = decile_summary(df, scorecard=scorecard, campaign_month=campaign_month)
-    if s.is_empty():
+    s = decile_summary(df, scorecard, campaign_month, decile_col)
+    if s.is_empty() or "cum_non_resp_pct" not in s.columns:
         return None
-    if "cum_capture" not in s.columns or "cum_non_resp_pct" not in s.columns:
+    xs = [0.0] + s["cum_non_resp_pct"].to_list()
+    ys = [0.0] + s["cum_capture"].to_list()
+    if any(v is None for v in xs + ys):
         return None
-    spread = (s["cum_capture"] - s["cum_non_resp_pct"]).abs()
-    mx = spread.max()
-    if mx is None:
-        return None
-    return float(mx)
+    auc = 0.0
+    for i in range(1, len(xs)):
+        auc += (xs[i] - xs[i - 1]) * (ys[i] + ys[i - 1]) / 2
+    return float(auc)
 
 
-def ks_by_month(df: pl.DataFrame, scorecard: int | None = None) -> pl.DataFrame:
+def gini_value(
+    df: pl.DataFrame,
+    scorecard: int | None = None,
+    campaign_month: str | None = None,
+    decile_col: str = DECILE_COL,
+) -> float | None:
+    """Gini = 2 × AUC − 1.  Range [-1, 1]; perfect = 1, random = 0."""
+    auc = auc_value(df, scorecard, campaign_month, decile_col)
+    if auc is None:
+        return None
+    return 2 * auc - 1
+
+
+def ks_by_month(
+    df: pl.DataFrame,
+    scorecard: int | None = None,
+    decile_col: str = DECILE_COL,
+) -> pl.DataFrame:
     """KS per campaign_month for the given scorecard (or across all)."""
     if "campaign_month" not in df.columns:
         return pl.DataFrame()
@@ -218,7 +276,8 @@ def ks_by_month(df: pl.DataFrame, scorecard: int | None = None) -> pl.DataFrame:
     for m in months:
         rows.append({
             "campaign_month": m,
-            "ks": ks_value(df, scorecard=scorecard, campaign_month=m),
+            "ks": ks_value(df, scorecard=scorecard, campaign_month=m,
+                           decile_col=decile_col),
         })
     return pl.DataFrame(rows)
 

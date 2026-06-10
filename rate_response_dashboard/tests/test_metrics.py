@@ -75,31 +75,27 @@ def test_safe_div_handles_zero_denominator():
     assert out["actual_response_rate"][0] is None
 
 
-def _toy_decile() -> pl.DataFrame:
+def _toy_decile(responders: list[int] | None = None) -> pl.DataFrame:
     # One scorecard, 10 deciles. Decile 1 = highest score = highest response.
     return pl.DataFrame({
         "campaign_month": ["2026-05"] * 10,
         "scorecard": [1] * 10,
-        "total_decile": list(range(1, 11)),
+        "decile": list(range(1, 11)),
         "volume":     [1000] * 10,
-        # Strongly rank-ordered responses, declining D1→D10:
-        "responders": [200, 150, 120, 100, 80, 60, 50, 40, 30, 20],
+        "responders": responders or [200, 150, 120, 100, 80, 60, 50, 40, 30, 20],
         "Boards":     [100,  80,  60,  50, 40, 30, 25, 20, 15, 10],
     })
 
 
 def test_decile_summary_cum_capture_reaches_one():
     s = metrics.decile_summary(_toy_decile(), scorecard=1)
-    # At decile 10 the cumulative capture must be 1.0 (all responders included).
     assert s["cum_capture"][-1] == pytest.approx(1.0)
     assert s["cum_volume_pct"][-1] == pytest.approx(1.0)
 
 
-def test_ks_value_matches_hand_calc():
+def test_ks_value_matches_per_decile_max():
     s = metrics.decile_summary(_toy_decile(), scorecard=1)
-    # Hand check: KS = max(|cum_capture - cum_non_resp_pct|).
-    spread = (s["cum_capture"] - s["cum_non_resp_pct"]).abs()
-    assert metrics.ks_value(_toy_decile(), scorecard=1) == pytest.approx(float(spread.max()))
+    assert metrics.ks_value(_toy_decile(), scorecard=1) == pytest.approx(float(s["per_decile_ks"].max()))
 
 
 def test_ks_returns_none_when_no_responders():
@@ -109,10 +105,48 @@ def test_ks_returns_none_when_no_responders():
 
 def test_decile_summary_lift_top_decile_above_one():
     s = metrics.decile_summary(_toy_decile(), scorecard=1)
-    # Top decile concentrates responders, so lift > 1.
     assert s["lift"][0] > 1.0
-    # Bottom decile lift < 1.
     assert s["lift"][-1] < 1.0
+
+
+def test_misrank_zero_on_well_ordered():
+    # Strictly decreasing responders → response_rate strictly decreasing
+    # (since volume is constant) → no misrank.
+    s = metrics.decile_summary(_toy_decile(), scorecard=1)
+    assert s["misrank"].sum() == 0
+
+
+def test_misrank_flags_violations():
+    # Swap deciles 3 and 4 so D4 has higher responders than D3.
+    bad = [200, 150, 100, 120, 80, 60, 50, 40, 30, 20]
+    s = metrics.decile_summary(_toy_decile(responders=bad), scorecard=1)
+    # D4 (0-indexed row 3) should be flagged because its rate > D3's rate.
+    assert s["misrank"][3] == 1
+    assert s["misrank"].sum() >= 1
+
+
+def test_auc_perfect_rank_above_random():
+    # Our toy data is strongly rank-ordered; AUC should be well above 0.5.
+    auc = metrics.auc_value(_toy_decile(), scorecard=1)
+    assert auc is not None and auc > 0.7
+
+
+def test_auc_random_near_half():
+    # Flat distribution of responders → no signal → AUC ≈ 0.5.
+    flat = [85] * 10
+    auc = metrics.auc_value(_toy_decile(responders=flat), scorecard=1)
+    assert auc == pytest.approx(0.5, abs=0.01)
+
+
+def test_gini_equals_two_auc_minus_one():
+    auc = metrics.auc_value(_toy_decile(), scorecard=1)
+    gini = metrics.gini_value(_toy_decile(), scorecard=1)
+    assert gini == pytest.approx(2 * auc - 1)
+
+
+def test_per_decile_ks_max_equals_ks_value():
+    s = metrics.decile_summary(_toy_decile(), scorecard=1)
+    assert s["per_decile_ks"].max() == pytest.approx(metrics.ks_value(_toy_decile(), scorecard=1))
 
 
 def test_suppression_nulls_rates_but_keeps_counts():

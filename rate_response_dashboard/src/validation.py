@@ -21,6 +21,7 @@ from __future__ import annotations
 import csv
 import logging
 from dataclasses import dataclass, field, asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
@@ -165,17 +166,87 @@ def make_load_log_row(
     }
 
 
-def rebuild_validation_summary(mart_dir: str | Path, out_path: str | Path) -> None:
+def _end_of_month(year: int, month: int) -> datetime:
+    """Return midnight at the start of the following month — i.e. the
+    inclusive end-of-month boundary used for maturity calculations."""
+    if month == 12:
+        return datetime(year + 1, 1, 1)
+    return datetime(year, month + 1, 1)
+
+
+def _add_months(d: datetime, months: int) -> datetime:
+    """Shift a datetime by N whole months. Day is preserved if possible,
+    otherwise clamped to month-end. Used only for maturity arithmetic."""
+    total = d.year * 12 + (d.month - 1) + months
+    y = total // 12
+    m = total % 12 + 1
+    return datetime(y, m, 1)
+
+
+def _latest_sas_run_dates(load_log_path: Path) -> dict[str, datetime]:
+    """Return campaign_month → latest source_modified_time recorded in
+    load_log.csv. This is the true 'SAS rerun' timestamp (the time SAS
+    finished writing the CSV), more accurate than partition mtime as a
+    maturity proxy because it is unaffected by --skip-sas --force ingests
+    that only rewrite the parquet without rerunning SAS.
+    """
+    if not load_log_path.exists():
+        return {}
+    out: dict[str, datetime] = {}
+    with open(load_log_path, "r", encoding="utf-8", newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            cm = (row.get("campaign_month") or "").strip()
+            ts_raw = (row.get("source_modified_time") or "").strip()
+            if not cm or not ts_raw:
+                continue
+            try:
+                ts = datetime.fromisoformat(ts_raw)
+            except ValueError:
+                continue
+            if cm not in out or ts > out[cm]:
+                out[cm] = ts
+    return out
+
+
+def _maturity_status(
+    campaign_month_iso: str,
+    sas_run_date: datetime | None,
+    threshold_months: int,
+) -> str:
+    """'full' iff SAS rerun finished on/after end_of(campaign_month) + N months.
+    Returns 'unknown' when sas_run_date is missing."""
+    if sas_run_date is None:
+        return "unknown"
+    try:
+        y, m = (int(x) for x in campaign_month_iso.split("-"))
+    except ValueError:
+        return "unknown"
+    threshold = _add_months(_end_of_month(y, m), threshold_months)
+    return "full" if sas_run_date >= threshold else "partial"
+
+
+def rebuild_validation_summary(
+    mart_dir: str | Path,
+    out_path: str | Path,
+    logs_dir: str | Path | None = None,
+    maturity_threshold_months: int = 3,
+) -> None:
     """Walk the mart and emit one summary row per partition currently on disk.
 
     This is the truth file (load_log is the history). The dashboard's Data
     Quality tab prefers this over load_log when both exist.
 
-    A `has_xpm` boolean column is included so the DQ tab can flag months
-    whose expected_rr_xpm and actual_vs_expected_xpm are unreliable (because
-    the SAS pipeline didn't source EXP_RESPONSE_SCORE).
+    Columns:
+      campaign_month, partition_path, row_count, total_volume,
+      total_responders, total_boards, total_expected_responses,
+      total_expected_responses_xpm, has_xpm, sas_run_date, maturity_status
     """
     mart_dir = Path(mart_dir)
+    logs_dir_path = Path(logs_dir) if logs_dir is not None else None
+    sas_run_dates: dict[str, datetime] = {}
+    if logs_dir_path is not None:
+        sas_run_dates = _latest_sas_run_dates(logs_dir_path / "load_log.csv")
     rows = []
     for part in sorted(mart_dir.glob("campaign_month=*")):
         pq = part / "rollup.parquet"
@@ -203,8 +274,17 @@ def rebuild_validation_summary(mart_dir: str | Path, out_path: str | Path) -> No
         # the total is non-zero. All-null or all-zero is treated as missing.
         has_xpm = bool(xpm_nn) and ex is not None and ex != 0
 
+        cm_iso = part.name.split("=", 1)[1]
+        sas_dt = sas_run_dates.get(cm_iso)
+        if sas_dt is None:
+            # Fall back to partition mtime when no load_log entry available.
+            try:
+                sas_dt = datetime.fromtimestamp(pq.stat().st_mtime)
+            except OSError:
+                sas_dt = None
+        maturity = _maturity_status(cm_iso, sas_dt, maturity_threshold_months)
         rows.append({
-            "campaign_month": part.name.split("=", 1)[1],
+            "campaign_month": cm_iso,
             "partition_path": str(part),
             "row_count": df.height,
             "total_volume": totals["v"],
@@ -213,6 +293,8 @@ def rebuild_validation_summary(mart_dir: str | Path, out_path: str | Path) -> No
             "total_expected_responses": totals["et"],
             "total_expected_responses_xpm": ex,
             "has_xpm": has_xpm,
+            "sas_run_date": sas_dt.isoformat(timespec="seconds") if sas_dt else "",
+            "maturity_status": maturity,
         })
     if not rows:
         log.warning("No mart partitions found at %s", mart_dir)

@@ -21,8 +21,12 @@ _ROLLUP_FILE_RE = re.compile(
     r"^exp_(?P<mon>JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(?P<yy>\d{2})_rollup\.csv$",
     re.IGNORECASE,
 )
-_DECILE_FILE_RE = re.compile(
-    r"^exp_(?P<mon>JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(?P<yy>\d{2})_decile\.csv$",
+_DECILE_SC_FILE_RE = re.compile(
+    r"^exp_(?P<mon>JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(?P<yy>\d{2})_decile_sc\.csv$",
+    re.IGNORECASE,
+)
+_DECILE_PORT_FILE_RE = re.compile(
+    r"^exp_(?P<mon>JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(?P<yy>\d{2})_decile_port\.csv$",
     re.IGNORECASE,
 )
 
@@ -59,9 +63,14 @@ class CampaignMonth:
         return f"exp_{self.sas_label}_rollup.csv"
 
     @property
-    def decile_filename(self) -> str:
-        """e.g. 'exp_JAN25_decile.csv' — decile-grain SAS export filename."""
-        return f"exp_{self.sas_label}_decile.csv"
+    def decile_sc_filename(self) -> str:
+        """e.g. 'exp_JAN25_decile_sc.csv' — scorecard-level decile rollup."""
+        return f"exp_{self.sas_label}_decile_sc.csv"
+
+    @property
+    def decile_port_filename(self) -> str:
+        """e.g. 'exp_JAN25_decile_port.csv' — portfolio-level decile rollup."""
+        return f"exp_{self.sas_label}_decile_port.csv"
 
 
 def _parse_with(pattern: re.Pattern, name: str) -> CampaignMonth | None:
@@ -82,9 +91,14 @@ def parse_rollup_filename(name: str) -> CampaignMonth | None:
     return _parse_with(_ROLLUP_FILE_RE, name)
 
 
-def parse_decile_filename(name: str) -> CampaignMonth | None:
-    """Parse 'exp_JAN25_decile.csv' → CampaignMonth(2025, 1)."""
-    return _parse_with(_DECILE_FILE_RE, name)
+def parse_decile_sc_filename(name: str) -> CampaignMonth | None:
+    """Parse 'exp_JAN25_decile_sc.csv' → CampaignMonth(2025, 1)."""
+    return _parse_with(_DECILE_SC_FILE_RE, name)
+
+
+def parse_decile_port_filename(name: str) -> CampaignMonth | None:
+    """Parse 'exp_JAN25_decile_port.csv' → CampaignMonth(2025, 1)."""
+    return _parse_with(_DECILE_PORT_FILE_RE, name)
 
 
 def iso_to_campaign_month(iso: str) -> CampaignMonth:
