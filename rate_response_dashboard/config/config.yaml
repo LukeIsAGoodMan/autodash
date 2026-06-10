@@ -73,6 +73,10 @@ dashboard:
   # Default dimensions/metrics shown in pivot tab.
   default_row_dim: "vs_band"
   default_metric: "actual_board_rate"
+  # When the campaign-month filter is empty, charts/tables auto-restrict to
+  # the most recent N months. User can still override by selecting specific
+  # months in the dropdown. Set very large (e.g. 999) to disable.
+  default_lookback_months: 24
 
 # Catalog of dimensions and metrics exposed in the UI. Order matters.
 catalog:

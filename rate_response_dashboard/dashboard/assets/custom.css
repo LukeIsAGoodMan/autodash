@@ -384,6 +384,14 @@ input[type="number"]:focus, input.form-control:focus {
   background: var(--omni-soft) !important;
 }
 
+/* ---------------------------------------------------------- chart meta caption */
+.chart-meta {
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: .04em;
+  margin: -6px 0 10px 0;
+}
+
 /* ---------------------------------------------------------- buttons */
 .btn {
   border-radius: 10px !important;

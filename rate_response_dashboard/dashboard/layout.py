@@ -113,6 +113,7 @@ def tab_executive() -> dbc.Tab:
 
     trend = dbc.Card(dbc.CardBody([
         html.H6("Monthly trend"),
+        html.Div(id="exec-trend-range", className="chart-meta"),
         dcc.Graph(id="exec-trend-chart", config={"displaylogo": False}),
     ]), className="mt-4")
 
@@ -168,7 +169,17 @@ def tab_pivot(cfg: dict) -> dbc.Tab:
                     value="pct",
                     inline=True,
                 ),
-            ], md=4),
+            ], md=2),
+            dbc.Col([
+                html.Label("Color mode"),
+                dcc.RadioItems(
+                    id="pivot-color-mode",
+                    options=[{"label": " Volume bars ", "value": "volume"},
+                             {"label": " MoM Δ ", "value": "mom"}],
+                    value="volume",
+                    inline=True,
+                ),
+            ], md=2),
         ], className="g-3"),
         html.Hr(),
         _filter_inner(cfg, prefix="pivot"),
@@ -190,6 +201,7 @@ def tab_pivot(cfg: dict) -> dbc.Tab:
 
     combo = dbc.Card(dbc.CardBody([
         html.H6("Volume mix (stacked bars) + metric trend (line)"),
+        html.Div(id="pivot-combo-range", className="chart-meta"),
         dcc.Graph(id="pivot-combo-chart", config={"displaylogo": False}),
     ]), className="mt-3")
 
@@ -211,23 +223,36 @@ def tab_model(cfg: dict) -> dbc.Tab:
     filters = html.Div(_filter_inner(cfg, prefix="model"),
                        className="controls-bar")
 
-    by_vsband = dbc.Card(dbc.CardBody([
-        html.H6("Actual vs Expected response rate by vs_band"),
-        dcc.Graph(id="model-by-vsband", config={"displaylogo": False}),
+    # Split the old combined chart into two — TRM (all months) and XPM
+    # (months with EXP_RESPONSE_SCORE only). Without this split, the XPM
+    # bars look near-zero because most months contribute volume but no xpm.
+    by_vsband_trm = dbc.Card(dbc.CardBody([
+        html.H6("Actual RR vs Expected RR (TRM) by vs_band"),
+        html.Div(id="model-vs-trm-range", className="chart-meta"),
+        dcc.Graph(id="model-by-vsband-trm", config={"displaylogo": False}),
+    ]), className="mb-3")
+
+    by_vsband_xpm = dbc.Card(dbc.CardBody([
+        html.H6("Actual RR vs Expected RR (XPM) by vs_band"),
+        html.Div(id="model-vs-xpm-range", className="chart-meta"),
+        dcc.Graph(id="model-by-vsband-xpm", config={"displaylogo": False}),
     ]), className="mb-3")
 
     monthly = dbc.Card(dbc.CardBody([
         html.H6("Actual RR vs Expected RR by month"),
+        html.Div(id="model-monthly-range", className="chart-meta"),
         dcc.Graph(id="model-arr-vs-exp", config={"displaylogo": False}),
     ]), className="mb-3")
 
     by_trm = dbc.Card(dbc.CardBody([
         html.H6("Actual RR by TRM10 tier"),
+        html.Div(id="model-trm-range", className="chart-meta"),
         dcc.Graph(id="model-by-trm", config={"displaylogo": False}),
     ]))
 
     by_sc = dbc.Card(dbc.CardBody([
         html.H6("Actual / Expected by scorecard"),
+        html.Div(id="model-sc-range", className="chart-meta"),
         dcc.Graph(id="model-by-scorecard", config={"displaylogo": False}),
     ]))
 
@@ -237,7 +262,8 @@ def tab_model(cfg: dict) -> dbc.Tab:
         children=html.Div([
             filters,
             section_header("Calibration"),
-            by_vsband,
+            by_vsband_trm,
+            by_vsband_xpm,
             monthly,
             dbc.Row([dbc.Col(by_trm, md=6), dbc.Col(by_sc, md=6)], className="g-3"),
         ], className="tab-content-area"),
@@ -338,6 +364,10 @@ def _filter_inner(cfg: dict, prefix: str) -> html.Div:
             dbc.Col([
                 html.Label("annual_fee"),
                 dcc.Dropdown(id=f"{prefix}-f-fee", multi=True, placeholder="all"),
+            ], md=3),
+            dbc.Col([
+                html.Label("times_mailed_12mo_cnt"),
+                dcc.Dropdown(id=f"{prefix}-f-mailed", multi=True, placeholder="all"),
             ], md=3),
         ], className="g-2 mt-1"),
     ])

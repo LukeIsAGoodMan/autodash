@@ -72,6 +72,37 @@ def _apply_filters(df: pl.DataFrame, filters: dict) -> pl.DataFrame:
     return out
 
 
+def _apply_month_window(df: pl.DataFrame, selected_months: list | None,
+                        default_n: int) -> pl.DataFrame:
+    """Month filter with a 'default to last N months' fallback.
+
+    If the user has selected specific months, respect that selection.
+    Otherwise, when the mart has more than `default_n` months, truncate
+    to the most recent N. This keeps charts readable without forcing
+    the user to babysit a multi-select dropdown.
+    """
+    if selected_months:
+        return df.filter(pl.col("campaign_month").is_in(list(selected_months)))
+    if "campaign_month" not in df.columns:
+        return df
+    months = df["campaign_month"].unique().sort().to_list()
+    if len(months) <= default_n:
+        return df
+    return df.filter(pl.col("campaign_month").is_in(months[-default_n:]))
+
+
+def _chart_range_text(df: pl.DataFrame) -> str:
+    """Caption used under every chart's H6: 'YYYY-MM → YYYY-MM · N months'."""
+    if df.is_empty() or "campaign_month" not in df.columns:
+        return ""
+    months = df["campaign_month"].unique().sort().to_list()
+    if not months:
+        return ""
+    if len(months) == 1:
+        return f"{months[0]} · 1 month"
+    return f"{months[0]} → {months[-1]} · {len(months)} months"
+
+
 def _options(df: pl.DataFrame, col: str) -> list[dict]:
     if col not in df.columns:
         return []
@@ -156,16 +187,23 @@ def register_callbacks(app, cfg: dict) -> None:
         Output("kpi-aoe-overall", "children"),
         Output("kpi-aoe-card", "className"),
         Output("exec-trend-chart", "figure"),
+        Output("exec-trend-range", "children"),
         Input("tabs", "active_tab"),
     )
     def _exec(_tab):
-        df = load_mart(cfg)
-        if df.is_empty():
+        df_full = load_mart(cfg)
+        if df_full.is_empty():
             blank = {"data": [], "layout": {"title": "No data"}}
-            return ("—",) + ("—",) * 16 + ("kpi-card", blank)
+            return ("—",) + ("—",) * 16 + ("kpi-card", blank, "")
 
-        latest_m = _latest_month(df)
-        latest_df = df.filter(pl.col("campaign_month") == latest_m)
+        # Latest-month KPIs come from the absolute latest in mart.
+        # Overall KPIs and trend chart respect the lookback window so the
+        # display doesn't grow unbounded when mart accumulates years.
+        lookback = cfg["dashboard"].get("default_lookback_months", 24)
+        df = _apply_month_window(df_full, None, lookback)
+
+        latest_m = _latest_month(df_full)
+        latest_df = df_full.filter(pl.col("campaign_month") == latest_m)
         k_latest = metrics.kpi_totals(latest_df)
         k_all = metrics.kpi_totals(df)
 
@@ -222,6 +260,7 @@ def register_callbacks(app, cfg: dict) -> None:
             L("actual_vs_expected_trm", _fmt_ratio), O("actual_vs_expected_trm", _fmt_ratio),
             aoe_class,
             fig,
+            _chart_range_text(df),
         )
 
     # ----------------------------------------------------------- filter options
@@ -233,6 +272,7 @@ def register_callbacks(app, cfg: dict) -> None:
         "f-rm": "rm_flag",
         "f-trm": "trm10_tier",
         "f-fee": "annual_fee",
+        "f-mailed": "times_mailed_12mo_cnt",
     }
 
     for prefix in ("pivot", "model", "export"):
@@ -249,10 +289,12 @@ def register_callbacks(app, cfg: dict) -> None:
         Output("pivot-table", "columns"),
         Output("pivot-table", "style_data_conditional"),
         Output("pivot-combo-chart", "figure"),
+        Output("pivot-combo-range", "children"),
         Input("pivot-row-dim", "value"),
         Input("pivot-metric", "value"),
         Input("pivot-suppress", "value"),
         Input("pivot-format", "value"),
+        Input("pivot-color-mode", "value"),
         Input("pivot-f-months", "value"),
         Input("pivot-f-vs", "value"),
         Input("pivot-f-scorecard", "value"),
@@ -260,18 +302,22 @@ def register_callbacks(app, cfg: dict) -> None:
         Input("pivot-f-rm", "value"),
         Input("pivot-f-trm", "value"),
         Input("pivot-f-fee", "value"),
+        Input("pivot-f-mailed", "value"),
     )
-    def _pivot(row_dim, metric, suppress, fmt,
-               f_months, f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee):
+    def _pivot(row_dim, metric, suppress, fmt, color_mode,
+               f_months, f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
+        lookback = cfg["dashboard"].get("default_lookback_months", 24)
         df = load_mart(cfg)
+        df = _apply_month_window(df, f_months, lookback)
         df = _apply_filters(df, {
-            "campaign_month": f_months, "vs_band": f_vs,
+            "vs_band": f_vs,
             "scorecard": f_scorecard, "Prospect_type": f_prospect,
             "rm_flag": f_rm, "trm10_tier": f_trm, "annual_fee": f_fee,
+            "times_mailed_12mo_cnt": f_mailed,
         })
         empty_fig = {"data": [], "layout": {"title": "No data"}}
         if df.is_empty() or row_dim is None or metric is None:
-            return [], [], [], empty_fig
+            return [], [], [], empty_fig, ""
 
         # 1) Per-cell aggregation: each row_dim x month combination, then mask
         #    small cells. Suppression nulls the rate metric only.
@@ -314,55 +360,84 @@ def register_callbacks(app, cfg: dict) -> None:
         columns = [{"name": c, "id": c} for c in wide_metric.columns]
         data = wide_metric.to_dict("records")
 
-        # ---- inline volume bars in each cell -----------------------------
-        # Background gradient encodes the cell's share of column total volume.
-        # Width in % = cell_volume / column_volume_total. The Overall row
-        # (already styled separately) keeps its solid highlight.
-        vol_cell = (
-            df.group_by([row_dim, "campaign_month"])
-              .agg(pl.col("volume").sum().alias("volume"))
-              .to_pandas()
+        # Pre-compute the wide pivot of the selected metric over numeric (not
+        # formatted) values — needed for MoM Δ comparisons below.
+        metric_wide_num = (
+            cell_masked.to_pandas()
+                       .pivot_table(index=row_dim, columns="campaign_month",
+                                    values=metric, aggfunc="first")
+                       .reset_index()
         )
-        vol_wide = vol_cell.pivot_table(
-            index=row_dim, columns="campaign_month",
-            values="volume", aggfunc="first",
-        )
-        vol_wide.columns = [str(c) for c in vol_wide.columns]
+        metric_wide_num.columns = [str(c) for c in metric_wide_num.columns]
+        metric_wide_num = metric_wide_num.rename(columns={row_dim: "Row"})
 
-        # Overall column for the bar is each row's total / grand total
-        row_totals = vol_wide.sum(axis=1)
-        grand_total = row_totals.sum()
-        if grand_total and grand_total > 0:
-            vol_wide["Overall"] = row_totals
+        # ---- Cell color rules: 'volume' (default) or 'mom' ------------------
+        # We never stack both — two background colorings on the same cell would
+        # be visually noisy.
+        cell_rules: list[dict] = []
+        if color_mode == "mom":
+            # MoM Δ: compare each cell with the prior month in the same row.
+            # Up → green tint; down → red tint; equal/null → no tint.
+            month_cols = [c for c in metric_wide_num.columns
+                          if c not in ("Row", "Overall")]
+            for i in range(1, len(month_cols)):
+                col = month_cols[i]
+                prev = month_cols[i - 1]
+                for _, r in metric_wide_num.iterrows():
+                    row_val = r["Row"]
+                    curr_v, prev_v = r[col], r[prev]
+                    if curr_v is None or prev_v is None \
+                            or pd.isna(curr_v) or pd.isna(prev_v):
+                        continue
+                    if curr_v == prev_v:
+                        continue
+                    rv = str(row_val).replace('"', '\\"')
+                    if curr_v > prev_v:
+                        bg, fg = "#d4edda", "#155724"   # soft green
+                    else:
+                        bg, fg = "#f8d7da", "#721c24"   # soft red
+                    cell_rules.append({
+                        "if": {"column_id": col,
+                               "filter_query": f'{{Row}} = "{rv}"'},
+                        "backgroundColor": bg, "color": fg,
+                    })
         else:
-            vol_wide["Overall"] = 0.0
-
-        gradient_rules = []
-        for col in vol_wide.columns:
-            col_total = vol_wide[col].sum()
-            if not col_total or col_total <= 0:
-                continue
-            for row_val, vol in vol_wide[col].items():
-                if vol is None or pd.isna(vol) or vol <= 0:
+            # Volume bars: gradient width = cell volume / column total volume.
+            vol_cell = (
+                df.group_by([row_dim, "campaign_month"])
+                  .agg(pl.col("volume").sum().alias("volume"))
+                  .to_pandas()
+            )
+            vol_wide = vol_cell.pivot_table(
+                index=row_dim, columns="campaign_month",
+                values="volume", aggfunc="first",
+            )
+            vol_wide.columns = [str(c) for c in vol_wide.columns]
+            row_totals = vol_wide.sum(axis=1)
+            grand_total = row_totals.sum()
+            vol_wide["Overall"] = row_totals if (grand_total and grand_total > 0) else 0.0
+            for col in vol_wide.columns:
+                col_total = vol_wide[col].sum()
+                if not col_total or col_total <= 0:
                     continue
-                pct = max(2, min(100, (vol / col_total) * 100))
-                # filter_query needs the cell value quoted; row_val can be numeric
-                # for some dimensions so coerce to string consistently.
-                rv = str(row_val).replace('"', '\\"')
-                gradient_rules.append({
-                    "if": {
-                        "column_id": col,
-                        "filter_query": f'{{Row}} = "{rv}"',
-                    },
-                    "background":
-                        f"linear-gradient(90deg, rgba(26,77,140,0.10) {pct:.1f}%, "
-                        f"transparent {pct:.1f}%)",
-                })
+                for row_val, vol in vol_wide[col].items():
+                    if vol is None or pd.isna(vol) or vol <= 0:
+                        continue
+                    pct = max(2, min(100, (vol / col_total) * 100))
+                    rv = str(row_val).replace('"', '\\"')
+                    cell_rules.append({
+                        "if": {"column_id": col,
+                               "filter_query": f'{{Row}} = "{rv}"'},
+                        "background":
+                            f"linear-gradient(90deg, rgba(26,77,140,0.10) {pct:.1f}%, "
+                            f"transparent {pct:.1f}%)",
+                    })
 
-        # Static rules go LAST so they override the gradient on the Overall row.
-        style_rules = gradient_rules + [
+        # Overall row goes LAST so it overrides any per-cell coloring.
+        style_rules = cell_rules + [
             {"if": {"filter_query": "{Row} = 'Overall'"},
-             "backgroundColor": "#e8eff8", "fontWeight": "700"},
+             "backgroundColor": "#e8eff8", "fontWeight": "700",
+             "color": "#0e2238"},
         ]
 
         # 7) Combo chart: stacked bars of volume by row_dim per month + line
@@ -403,14 +478,20 @@ def register_callbacks(app, cfg: dict) -> None:
                         tickformat=y2_fmt, showgrid=False),
             height=440,
         )
-        return data, columns, style_rules, fig
+        return data, columns, style_rules, fig, _chart_range_text(df)
 
     # ----------------------------------------------------------- model perf
     @app.callback(
-        Output("model-by-vsband", "figure"),
+        Output("model-by-vsband-trm", "figure"),
+        Output("model-vs-trm-range", "children"),
+        Output("model-by-vsband-xpm", "figure"),
+        Output("model-vs-xpm-range", "children"),
         Output("model-arr-vs-exp", "figure"),
+        Output("model-monthly-range", "children"),
         Output("model-by-trm", "figure"),
+        Output("model-trm-range", "children"),
         Output("model-by-scorecard", "figure"),
+        Output("model-sc-range", "children"),
         Input("model-f-months", "value"),
         Input("model-f-vs", "value"),
         Input("model-f-scorecard", "value"),
@@ -418,36 +499,66 @@ def register_callbacks(app, cfg: dict) -> None:
         Input("model-f-rm", "value"),
         Input("model-f-trm", "value"),
         Input("model-f-fee", "value"),
+        Input("model-f-mailed", "value"),
     )
-    def _model(f_months, f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee):
+    def _model(f_months, f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
+        lookback = cfg["dashboard"].get("default_lookback_months", 24)
         df = load_mart(cfg)
+        df = _apply_month_window(df, f_months, lookback)
         df = _apply_filters(df, {
-            "campaign_month": f_months, "vs_band": f_vs,
+            "vs_band": f_vs,
             "scorecard": f_scorecard, "Prospect_type": f_prospect,
             "rm_flag": f_rm, "trm10_tier": f_trm, "annual_fee": f_fee,
+            "times_mailed_12mo_cnt": f_mailed,
         })
         blank = {"data": [], "layout": {"title": "No data"}}
         if df.is_empty():
-            return blank, blank, blank, blank
+            return (blank, "", blank, "", blank, "", blank, "", blank, "")
 
-        # by vs_band: grouped bars actual vs expected_trm vs expected_xpm
-        by_vs = metrics.aggregate_by(df, ["vs_band"]).to_pandas().sort_values("vs_band")
-        vs_long = by_vs.melt(
+        full_range = _chart_range_text(df)
+
+        # Chart 1: by vs_band — Actual vs Expected (TRM). Uses all months.
+        by_vs_trm = metrics.aggregate_by(df, ["vs_band"]).to_pandas().sort_values("vs_band")
+        vs_long_trm = by_vs_trm.melt(
             id_vars="vs_band",
-            value_vars=["actual_response_rate", "expected_rr_trm", "expected_rr_xpm"],
+            value_vars=["actual_response_rate", "expected_rr_trm"],
             var_name="series", value_name="rate",
         )
-        f0 = px.bar(
-            vs_long, x="vs_band", y="rate", color="series", barmode="group",
-            color_discrete_sequence=[PRIMARY, GOOD, WARN],
-            text="rate",
+        f_trm = px.bar(
+            vs_long_trm, x="vs_band", y="rate", color="series", barmode="group",
+            color_discrete_sequence=[PRIMARY, GOOD], text="rate",
         )
-        f0.update_traces(texttemplate="%{text:.2%}", textposition="outside",
-                         textfont_size=10)
-        f0.update_layout(yaxis_tickformat=".1%", yaxis_title="rate",
-                         xaxis_title=None, legend_title="", height=400)
+        f_trm.update_traces(texttemplate="%{text:.2%}", textposition="outside",
+                            textfont_size=10)
+        f_trm.update_layout(yaxis_tickformat=".1%", yaxis_title="rate",
+                            xaxis_title=None, legend_title="", height=400)
 
-        # by month: actual vs expected_trm
+        # Chart 2: by vs_band — Actual vs Expected (XPM). XPM is null for
+        # months where SAS did not source EXP_RESPONSE_SCORE; restrict to
+        # rows where the column is non-null so the comparison is fair.
+        df_xpm = df.filter(pl.col("expected_responses_xpm").is_not_null()) \
+            if "expected_responses_xpm" in df.columns else df.clear()
+        if df_xpm.is_empty():
+            f_xpm = blank
+            xpm_range = "No months with XPM available"
+        else:
+            by_vs_xpm = metrics.aggregate_by(df_xpm, ["vs_band"]).to_pandas().sort_values("vs_band")
+            vs_long_xpm = by_vs_xpm.melt(
+                id_vars="vs_band",
+                value_vars=["actual_response_rate", "expected_rr_xpm"],
+                var_name="series", value_name="rate",
+            )
+            f_xpm = px.bar(
+                vs_long_xpm, x="vs_band", y="rate", color="series", barmode="group",
+                color_discrete_sequence=[PRIMARY, WARN], text="rate",
+            )
+            f_xpm.update_traces(texttemplate="%{text:.2%}", textposition="outside",
+                                textfont_size=10)
+            f_xpm.update_layout(yaxis_tickformat=".1%", yaxis_title="rate",
+                                xaxis_title=None, legend_title="", height=400)
+            xpm_range = "XPM months only · " + _chart_range_text(df_xpm)
+
+        # Chart 3: by month — actual vs expected_trm
         by_m = metrics.monthly_trend(df).to_pandas().sort_values("campaign_month")
         m_long = by_m.melt(
             id_vars="campaign_month",
@@ -462,7 +573,7 @@ def register_callbacks(app, cfg: dict) -> None:
         f1.update_layout(yaxis_tickformat=".1%", xaxis_title=None,
                          yaxis_title="rate", legend_title="", height=380)
 
-        # by TRM10 tier
+        # Chart 4: by TRM10 tier — actual response rate
         by_trm = metrics.aggregate_by(df, ["trm10_tier"]).to_pandas().sort_values("trm10_tier")
         f2 = px.bar(by_trm, x="trm10_tier", y="actual_response_rate",
                     text="actual_response_rate",
@@ -472,7 +583,7 @@ def register_callbacks(app, cfg: dict) -> None:
         f2.update_layout(yaxis_tickformat=".1%", xaxis_title=None,
                          yaxis_title="rate", height=380)
 
-        # by scorecard
+        # Chart 5: by scorecard — actual / expected ratio
         by_sc = metrics.aggregate_by(df, ["scorecard"]).to_pandas().sort_values("scorecard")
         f3 = px.bar(by_sc, x="scorecard", y="actual_vs_expected_trm",
                     text="actual_vs_expected_trm",
@@ -481,7 +592,9 @@ def register_callbacks(app, cfg: dict) -> None:
                          textfont_size=10)
         f3.update_layout(xaxis_title=None,
                          yaxis_title="actual / expected", height=380)
-        return f0, f1, f2, f3
+
+        return (f_trm, full_range, f_xpm, xpm_range,
+                f1, full_range, f2, full_range, f3, full_range)
 
     # ----------------------------------------------------------- data quality
     @app.callback(
@@ -519,17 +632,20 @@ def register_callbacks(app, cfg: dict) -> None:
         State("export-f-rm", "value"),
         State("export-f-trm", "value"),
         State("export-f-fee", "value"),
+        State("export-f-mailed", "value"),
         prevent_initial_call=True,
     )
     def _export(n_csv, n_xlsx,
-                f_months, f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee):
+                f_months, f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
         from dash import ctx
         if not ctx.triggered_id:
             return no_update
+        # Export respects exact user selections; no default lookback truncation.
         df = _apply_filters(load_mart(cfg), {
             "campaign_month": f_months, "vs_band": f_vs,
             "scorecard": f_scorecard, "Prospect_type": f_prospect,
             "rm_flag": f_rm, "trm10_tier": f_trm, "annual_fee": f_fee,
+            "times_mailed_12mo_cnt": f_mailed,
         }).to_pandas()
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         if ctx.triggered_id == "btn-export-csv":
