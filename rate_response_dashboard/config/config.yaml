@@ -10,6 +10,7 @@ paths:
   # backslashes literally.
   rollup_csv_dir: '\\fnbm.corp\share\Risk\Modeling\Model Development\Vendor Engagements\Active\01 - Adhoc\2026Q2_RR_Anlaysis\FilterCRS'
   mart_dir: "./data/mart/rate_response_rollup"
+  decile_mart_dir: "./data/mart/decile_rollup"
   logs_dir: "./data/logs"
   sas_pipeline_file: "./sas/rate_response_pipeline.sas"
 
@@ -65,6 +66,15 @@ mart:
   drop_precomputed_rate_columns:
     - GRR
     - NRR
+
+  # Decile-grain mart (P4). Schema is much narrower than the main rollup
+  # because the SAS %rollup_decile macro emits only counts.
+  decile_required_columns:
+    - scorecard
+    - total_decile
+    - volume
+    - responders
+    - Boards
 
 dashboard:
   title: "Rate Response Dashboard"

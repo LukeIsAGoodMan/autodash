@@ -21,6 +21,7 @@ from dash import Input, Output, State, dash_table, dcc, no_update
 
 from src import metrics
 from src.build_mart import list_partition_months, read_mart
+from src.ingest_decile import read_decile_mart
 
 PCT_METRICS = {
     "actual_response_rate", "actual_board_rate",
@@ -57,6 +58,22 @@ def _mart_version(mart_dir: str) -> float:
 def load_mart(cfg: dict) -> pl.DataFrame:
     mart_dir = cfg["paths"]["mart_dir"]
     return _cached_mart(mart_dir, _mart_version(mart_dir))
+
+
+@lru_cache(maxsize=1)
+def _cached_decile_mart(mart_dir: str, mart_version: float) -> pl.DataFrame:
+    return read_decile_mart(mart_dir)
+
+
+def _decile_mart_version(mart_dir: str) -> float:
+    p = Path(mart_dir)
+    mtimes = [f.stat().st_mtime for f in p.glob("campaign_month=*/decile.parquet")]
+    return max(mtimes) if mtimes else 0.0
+
+
+def load_decile_mart(cfg: dict) -> pl.DataFrame:
+    mart_dir = cfg["paths"]["decile_mart_dir"]
+    return _cached_decile_mart(mart_dir, _decile_mart_version(mart_dir))
 
 
 # ----------------------------------------------------------- filter helpers
@@ -669,6 +686,154 @@ def register_callbacks(app, cfg: dict) -> None:
             cols, data = [], []
         return (months[-1] if months else "—", ts, _fmt_count(len(months)),
                 data, cols)
+
+    # ----------------------------------------------------------- rank order
+    @app.callback(
+        Output("rank-f-month", "options"),
+        Output("rank-f-month", "value"),
+        Output("rank-f-scorecard", "options"),
+        Output("rank-f-scorecard", "value"),
+        Input("tabs", "active_tab"),
+    )
+    def _rank_filter_options(_tab):
+        d = load_decile_mart(cfg)
+        if d.is_empty():
+            return [], None, [], None
+        months = d["campaign_month"].unique().sort().to_list()
+        scs = d["scorecard"].drop_nulls().unique().sort().to_list()
+        return (
+            [{"label": m, "value": m} for m in months], months[-1] if months else None,
+            [{"label": "All scorecards", "value": "__all__"}]
+                + [{"label": f"Scorecard {s}", "value": int(s)} for s in scs],
+            "__all__",
+        )
+
+    @app.callback(
+        Output("rank-ks", "children"),
+        Output("rank-top-lift", "children"),
+        Output("rank-volume", "children"),
+        Output("rank-resp", "children"),
+        Output("rank-capture-chart", "figure"),
+        Output("rank-capture-range", "children"),
+        Output("rank-rr-chart", "figure"),
+        Output("rank-rr-range", "children"),
+        Output("rank-ks-chart", "figure"),
+        Output("rank-ks-range", "children"),
+        Output("rank-table", "data"),
+        Output("rank-table", "columns"),
+        Output("rank-table-range", "children"),
+        Input("rank-f-month", "value"),
+        Input("rank-f-scorecard", "value"),
+    )
+    def _rank(month, scorecard):
+        d = load_decile_mart(cfg)
+        blank = {"data": [], "layout": {"title": "No decile data"}}
+        if d.is_empty():
+            empty_msg = ("Decile mart is empty. Run SAS for at least one month "
+                         "after the new %rollup_decile macro is installed, "
+                         "then re-run the monthly refresh.")
+            return ("—", "—", "—", "—",
+                    blank, empty_msg, blank, empty_msg,
+                    blank, empty_msg, [], [], empty_msg)
+
+        sc_filter = None if (scorecard in (None, "__all__")) else int(scorecard)
+        target_month = month or d["campaign_month"].max()
+
+        summary = metrics.decile_summary(d, scorecard=sc_filter,
+                                         campaign_month=target_month)
+        ks = metrics.ks_value(d, scorecard=sc_filter,
+                              campaign_month=target_month)
+
+        # ---- KPI cards
+        if summary.is_empty():
+            ks_str = top_lift_str = vol_str = resp_str = "—"
+        else:
+            ks_str = _fmt_pct(ks) if ks is not None else "—"
+            top_lift_str = _fmt_ratio(summary["lift"][0]) if summary["lift"][0] is not None else "—"
+            vol_str = _fmt_count(int(summary["volume"].sum()))
+            resp_str = _fmt_count(int(summary["responders"].sum()))
+
+        sc_caption = "all scorecards" if sc_filter is None else f"scorecard {sc_filter}"
+        range_text = f"{target_month} · {sc_caption}"
+
+        # ---- Cumulative capture curve (+ diagonal reference)
+        if summary.is_empty():
+            fig_cap = blank
+        else:
+            xs = [0.0] + summary["cum_volume_pct"].to_list()
+            ys = [0.0] + summary["cum_capture"].to_list()
+            fig_cap = go.Figure()
+            fig_cap.add_scatter(x=[0, 1], y=[0, 1], mode="lines",
+                                line=dict(color="#a9b8c8", width=1.5, dash="dash"),
+                                name="random", hoverinfo="skip")
+            fig_cap.add_scatter(x=xs, y=ys, mode="lines+markers",
+                                fill="tozeroy", fillcolor="rgba(26,77,140,0.10)",
+                                line=dict(color=PRIMARY, width=3),
+                                marker=dict(size=7, line=dict(color="#ffffff", width=1.5)),
+                                name="capture")
+            fig_cap.update_layout(
+                xaxis=dict(title="Cumulative volume %", tickformat=".0%", range=[0, 1.02]),
+                yaxis=dict(title="Cumulative capture %", tickformat=".0%", range=[0, 1.02]),
+                height=400, legend=dict(orientation="h", y=1.05, x=1, xanchor="right"),
+            )
+
+        # ---- Response rate by decile (bar)
+        if summary.is_empty():
+            fig_rr = blank
+        else:
+            pdf = summary.to_pandas()
+            fig_rr = px.bar(pdf, x="total_decile", y="response_rate",
+                            text="response_rate",
+                            color_discrete_sequence=[PRIMARY])
+            fig_rr.update_traces(texttemplate="%{text:.2%}", textposition="outside",
+                                 textfont_size=10)
+            fig_rr.update_layout(yaxis_tickformat=".1%",
+                                 xaxis_title="Decile (1 = highest score)",
+                                 yaxis_title="response rate",
+                                 height=380)
+
+        # ---- KS over time
+        ks_df = metrics.ks_by_month(d, scorecard=sc_filter).to_pandas()
+        ks_range = (f"{ks_df['campaign_month'].min()} → "
+                    f"{ks_df['campaign_month'].max()} · "
+                    f"{len(ks_df)} months · {sc_caption}") if not ks_df.empty else ""
+        if ks_df.empty:
+            fig_ks = blank
+        else:
+            fig_ks = px.line(ks_df, x="campaign_month", y="ks", markers=True,
+                             color_discrete_sequence=[PRIMARY])
+            fig_ks.update_traces(line=dict(width=2.5),
+                                 marker=dict(size=8, line=dict(color="#ffffff", width=1.5)))
+            fig_ks.update_layout(yaxis_tickformat=".1%",
+                                 xaxis_title=None, yaxis_title="KS",
+                                 height=360)
+
+        # ---- Decile detail table
+        if summary.is_empty():
+            table_data, table_cols = [], []
+        else:
+            display = summary.select([
+                "total_decile", "volume", "responders", "Boards",
+                "response_rate", "cum_capture", "cum_volume_pct", "lift",
+            ]).to_pandas()
+            for c in ("response_rate", "cum_capture", "cum_volume_pct"):
+                display[c] = display[c].apply(_fmt_pct)
+            display["lift"] = display["lift"].apply(_fmt_ratio)
+            display["volume"] = display["volume"].apply(_fmt_count)
+            display["responders"] = display["responders"].apply(_fmt_count)
+            display["Boards"] = display["Boards"].apply(_fmt_count)
+            display.rename(columns={
+                "total_decile": "Decile",
+                "response_rate": "Response rate",
+                "cum_capture": "Cum capture",
+                "cum_volume_pct": "Cum volume",
+            }, inplace=True)
+            table_data = display.to_dict("records")
+            table_cols = [{"name": c, "id": c} for c in display.columns]
+
+        return (ks_str, top_lift_str, vol_str, resp_str,
+                fig_cap, range_text, fig_rr, range_text,
+                fig_ks, ks_range, table_data, table_cols, range_text)
 
     # ----------------------------------------------------------- export
     @app.callback(

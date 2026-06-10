@@ -270,6 +270,81 @@ def tab_model(cfg: dict) -> dbc.Tab:
     )
 
 
+def tab_rankorder() -> dbc.Tab:
+    """Decile-grain rank-order analytics: KS, capture curve, decile table."""
+    controls = html.Div([
+        dbc.Row([
+            dbc.Col([
+                html.Label("Campaign month"),
+                dcc.Dropdown(id="rank-f-month", clearable=False,
+                             placeholder="(latest)"),
+            ], md=3),
+            dbc.Col([
+                html.Label("Scorecard"),
+                dcc.Dropdown(id="rank-f-scorecard", clearable=False,
+                             placeholder="(all)"),
+            ], md=3),
+        ], className="g-3"),
+    ], className="controls-bar")
+
+    kpi_row = dbc.Row([
+        dbc.Col(kpi_card_single("KS",                "rank-ks",     variant="headline"), md=3),
+        dbc.Col(kpi_card_single("Top decile lift",   "rank-top-lift"),                   md=3),
+        dbc.Col(kpi_card_single("Total volume",      "rank-volume"),                     md=3),
+        dbc.Col(kpi_card_single("Total responders",  "rank-resp"),                       md=3),
+    ], className="g-3")
+
+    capture = dbc.Card(dbc.CardBody([
+        html.H6("Cumulative capture vs cumulative volume"),
+        html.Div(id="rank-capture-range", className="chart-meta"),
+        dcc.Graph(id="rank-capture-chart", config={"displaylogo": False}),
+    ]), className="mb-3")
+
+    rr_decile = dbc.Card(dbc.CardBody([
+        html.H6("Response rate by decile"),
+        html.Div(id="rank-rr-range", className="chart-meta"),
+        dcc.Graph(id="rank-rr-chart", config={"displaylogo": False}),
+    ]), className="mb-3")
+
+    ks_trend = dbc.Card(dbc.CardBody([
+        html.H6("KS over time"),
+        html.Div(id="rank-ks-range", className="chart-meta"),
+        dcc.Graph(id="rank-ks-chart", config={"displaylogo": False}),
+    ]), className="mb-3")
+
+    decile_table = dbc.Card(dbc.CardBody([
+        html.H6("Decile detail"),
+        html.Div(id="rank-table-range", className="chart-meta"),
+        dash_table.DataTable(
+            id="rank-table",
+            page_size=12,
+            style_table={"overflowX": "auto"},
+            style_cell={"padding": "8px", "fontFamily": "Segoe UI, sans-serif",
+                        "fontSize": "12.5px"},
+            style_data_conditional=[
+                {"if": {"row_index": "odd"}, "backgroundColor": "#fafbfd"},
+            ],
+        ),
+    ]))
+
+    return dbc.Tab(
+        label="Rank Order",
+        tab_id="tab-rankorder",
+        children=html.Div([
+            controls,
+            section_header("Headline"),
+            kpi_row,
+            section_header("Capture & calibration"),
+            capture,
+            rr_decile,
+            section_header("Stability"),
+            ks_trend,
+            section_header("Detail"),
+            decile_table,
+        ], className="tab-content-area"),
+    )
+
+
 def tab_dq() -> dbc.Tab:
     table = dash_table.DataTable(
         id="dq-table",
@@ -385,6 +460,7 @@ def build_layout(cfg: dict) -> html.Div:
                 tab_executive(),
                 tab_pivot(cfg),
                 tab_model(cfg),
+                tab_rankorder(),
                 tab_dq(),
                 tab_export(cfg),
             ],

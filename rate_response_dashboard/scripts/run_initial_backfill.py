@@ -16,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.ingest_decile import run_decile_ingest
 from src.ingest_rollups import run_ingest
 from src.sas_runner import SASError, run_sas_pipeline
 from src.utils import iso_to_campaign_month, load_config, setup_logging
@@ -83,6 +84,10 @@ def main() -> int:
     log.info("Phase 2: ingest rollup CSVs into parquet mart (force=%s)", args.force)
     summary = run_ingest(cfg, expected_months=months, force=args.force)
     log.info("Backfill summary: %s", summary)
+
+    log.info("Phase 2b: ingest decile CSVs (skipped silently if absent)")
+    decile_summary = run_decile_ingest(cfg, force=args.force)
+    log.info("Decile ingest summary: %s", decile_summary)
 
     successes = summary.get("added", 0) + summary.get("replaced", 0)
     if successes == 0:

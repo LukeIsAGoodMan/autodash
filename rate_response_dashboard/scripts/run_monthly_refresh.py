@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.ingest_decile import run_decile_ingest
 from src.ingest_rollups import run_ingest
 from src.sas_runner import SASError, open_sas
 from src.utils import CampaignMonth, iso_to_campaign_month, load_config, setup_logging
@@ -107,6 +108,11 @@ def main() -> int:
     # ---- 3. Ingest -----------------------------------------------------
     summary = run_ingest(cfg, expected_months=months)
     log.info("Monthly refresh summary: %s", summary)
+
+    # Decile mart is best-effort: silently skip if SAS hasn't started
+    # emitting decile CSVs for these months yet.
+    decile_summary = run_decile_ingest(cfg)
+    log.info("Decile ingest summary: %s", decile_summary)
 
     successes = summary.get("added", 0) + summary.get("replaced", 0)
     if successes == 0:

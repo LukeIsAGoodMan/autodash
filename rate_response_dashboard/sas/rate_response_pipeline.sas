@@ -232,6 +232,25 @@ quit;
 %mend;
 
 
+/* Additive macro: aggregates the per-customer trm finalresponse table at
+   the (scorecard, total_decile) grain so the dashboard can compute capture
+   rate and KS. Does NOT touch the existing %rollup macro or its output. */
+%macro rollup_decile(startdate, ds);
+proc sql;
+    create table &ds._decile_rollup as
+        select scorecard,
+               total_decile,
+               count(*)                as volume,
+               sum(GrossResponse)      as responders,
+               sum(NetResponse)        as Boards
+        from trm.&ds._finalresponse
+        where total_decile is not null
+        group by scorecard, total_decile
+        order by scorecard, total_decile;
+quit;
+%mend rollup_decile;
+
+
 %macro run_one_month(reportdate);
     %local starttime monthdate reportmon startdate labelname reptname;
     %let starttime = %sysfunc(datetime());
@@ -253,6 +272,14 @@ quit;
     %rollup(&startdate., &labelname.);
     proc export data=&labelname._rollup
         outfile="&folder./exp_&labelname._rollup.csv"
+        dbms=csv
+        replace;
+    run;
+    /* Decile-grain rollup for KS / capture analytics. Pure additive output
+       (no impact on the main exp_&labelname._rollup.csv produced above). */
+    %rollup_decile(&startdate., &labelname.);
+    proc export data=&labelname._decile_rollup
+        outfile="&folder./exp_&labelname._decile.csv"
         dbms=csv
         replace;
     run;

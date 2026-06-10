@@ -75,6 +75,46 @@ def test_safe_div_handles_zero_denominator():
     assert out["actual_response_rate"][0] is None
 
 
+def _toy_decile() -> pl.DataFrame:
+    # One scorecard, 10 deciles. Decile 1 = highest score = highest response.
+    return pl.DataFrame({
+        "campaign_month": ["2026-05"] * 10,
+        "scorecard": [1] * 10,
+        "total_decile": list(range(1, 11)),
+        "volume":     [1000] * 10,
+        # Strongly rank-ordered responses, declining D1→D10:
+        "responders": [200, 150, 120, 100, 80, 60, 50, 40, 30, 20],
+        "Boards":     [100,  80,  60,  50, 40, 30, 25, 20, 15, 10],
+    })
+
+
+def test_decile_summary_cum_capture_reaches_one():
+    s = metrics.decile_summary(_toy_decile(), scorecard=1)
+    # At decile 10 the cumulative capture must be 1.0 (all responders included).
+    assert s["cum_capture"][-1] == pytest.approx(1.0)
+    assert s["cum_volume_pct"][-1] == pytest.approx(1.0)
+
+
+def test_ks_value_matches_hand_calc():
+    s = metrics.decile_summary(_toy_decile(), scorecard=1)
+    # Hand check: KS = max(|cum_capture - cum_non_resp_pct|).
+    spread = (s["cum_capture"] - s["cum_non_resp_pct"]).abs()
+    assert metrics.ks_value(_toy_decile(), scorecard=1) == pytest.approx(float(spread.max()))
+
+
+def test_ks_returns_none_when_no_responders():
+    df = _toy_decile().with_columns(responders=pl.lit(0, dtype=pl.Int64))
+    assert metrics.ks_value(df, scorecard=1) is None
+
+
+def test_decile_summary_lift_top_decile_above_one():
+    s = metrics.decile_summary(_toy_decile(), scorecard=1)
+    # Top decile concentrates responders, so lift > 1.
+    assert s["lift"][0] > 1.0
+    # Bottom decile lift < 1.
+    assert s["lift"][-1] < 1.0
+
+
 def test_suppression_nulls_rates_but_keeps_counts():
     out = metrics.aggregate_by(_toy(), ["campaign_month", "vs_band"])
     masked = metrics.suppress_small_cells(out, threshold=500)

@@ -129,6 +129,100 @@ def pivot_table(
     return wide.sort(row_dim)
 
 
+# ============================================================================
+# Decile-grain metrics (P4): KS, capture rate, lift.
+# Operate on the decile mart frame: columns
+#   campaign_month, scorecard, total_decile, volume, responders, Boards
+# Convention: decile 1 = highest model score (most likely responders).
+# ============================================================================
+
+def decile_summary(
+    df: pl.DataFrame,
+    scorecard: int | None = None,
+    campaign_month: str | None = None,
+) -> pl.DataFrame:
+    """Return a per-decile summary with cumulative capture and lift.
+
+    Filters by `scorecard` and/or `campaign_month` if provided. Sums across
+    everything else (so e.g. multi-month aggregation works when both are None).
+    """
+    out = df
+    if scorecard is not None and "scorecard" in out.columns:
+        out = out.filter(pl.col("scorecard") == scorecard)
+    if campaign_month is not None and "campaign_month" in out.columns:
+        out = out.filter(pl.col("campaign_month") == campaign_month)
+    if out.is_empty():
+        return pl.DataFrame()
+
+    by_dec = out.group_by("total_decile").agg(
+        pl.col("volume").sum().alias("volume"),
+        pl.col("responders").sum().alias("responders"),
+        pl.col("Boards").sum().alias("Boards"),
+    ).sort("total_decile")
+
+    total_v = by_dec["volume"].sum() or 0
+    total_r = by_dec["responders"].sum() or 0
+    overall_rr = (total_r / total_v) if total_v else None
+
+    by_dec = by_dec.with_columns(
+        response_rate=_safe_div(pl.col("responders"), pl.col("volume")),
+        non_responders=(pl.col("volume") - pl.col("responders")),
+    ).with_columns(
+        cum_volume=pl.col("volume").cum_sum(),
+        cum_responders=pl.col("responders").cum_sum(),
+        cum_non_responders=pl.col("non_responders").cum_sum(),
+    )
+    by_dec = by_dec.with_columns(
+        cum_volume_pct=_safe_div(pl.col("cum_volume"), pl.lit(total_v)),
+        cum_capture=_safe_div(pl.col("cum_responders"), pl.lit(total_r)),
+        cum_non_resp_pct=_safe_div(pl.col("cum_non_responders"),
+                                   pl.lit(total_v - total_r)),
+    )
+    if overall_rr is not None and overall_rr > 0:
+        by_dec = by_dec.with_columns(
+            lift=pl.col("response_rate") / overall_rr,
+        )
+    else:
+        by_dec = by_dec.with_columns(lift=pl.lit(None).cast(pl.Float64))
+    return by_dec
+
+
+def ks_value(
+    df: pl.DataFrame,
+    scorecard: int | None = None,
+    campaign_month: str | None = None,
+) -> float | None:
+    """KS = max( |cum_responders_pct − cum_non_responders_pct| ) across deciles.
+
+    Returns None when there is not enough data to compute (no responders or
+    no non-responders).
+    """
+    s = decile_summary(df, scorecard=scorecard, campaign_month=campaign_month)
+    if s.is_empty():
+        return None
+    if "cum_capture" not in s.columns or "cum_non_resp_pct" not in s.columns:
+        return None
+    spread = (s["cum_capture"] - s["cum_non_resp_pct"]).abs()
+    mx = spread.max()
+    if mx is None:
+        return None
+    return float(mx)
+
+
+def ks_by_month(df: pl.DataFrame, scorecard: int | None = None) -> pl.DataFrame:
+    """KS per campaign_month for the given scorecard (or across all)."""
+    if "campaign_month" not in df.columns:
+        return pl.DataFrame()
+    months = df["campaign_month"].unique().sort().to_list()
+    rows = []
+    for m in months:
+        rows.append({
+            "campaign_month": m,
+            "ks": ks_value(df, scorecard=scorecard, campaign_month=m),
+        })
+    return pl.DataFrame(rows)
+
+
 def suppress_small_cells(
     df: pl.DataFrame,
     volume_col: str = VOLUME,

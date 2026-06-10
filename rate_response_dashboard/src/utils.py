@@ -16,9 +16,13 @@ _MONTH_ABBR = {
 }
 _MONTH_NUM_TO_ABBR = {v: k for k, v in _MONTH_ABBR.items()}
 
-# Filename produced by SAS: exp_JAN25_rollup.csv, exp_FEB26_rollup.csv ...
+# Filenames produced by SAS: exp_JAN25_rollup.csv, exp_JAN25_decile.csv ...
 _ROLLUP_FILE_RE = re.compile(
     r"^exp_(?P<mon>JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(?P<yy>\d{2})_rollup\.csv$",
+    re.IGNORECASE,
+)
+_DECILE_FILE_RE = re.compile(
+    r"^exp_(?P<mon>JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(?P<yy>\d{2})_decile\.csv$",
     re.IGNORECASE,
 )
 
@@ -54,20 +58,33 @@ class CampaignMonth:
         """e.g. 'exp_JAN25_rollup.csv' — filename SAS proc export writes."""
         return f"exp_{self.sas_label}_rollup.csv"
 
+    @property
+    def decile_filename(self) -> str:
+        """e.g. 'exp_JAN25_decile.csv' — decile-grain SAS export filename."""
+        return f"exp_{self.sas_label}_decile.csv"
 
-def parse_rollup_filename(name: str) -> CampaignMonth | None:
-    """Parse 'exp_JAN25_rollup.csv' → CampaignMonth(2025, 1). None if no match.
 
-    Two-digit year window: 00-79 → 20YY, 80-99 → 19YY. Adjust if your
-    historical pulls predate 1980.
-    """
-    m = _ROLLUP_FILE_RE.match(os.path.basename(name))
+def _parse_with(pattern: re.Pattern, name: str) -> CampaignMonth | None:
+    m = pattern.match(os.path.basename(name))
     if not m:
         return None
     mon = _MONTH_ABBR[m.group("mon").upper()]
     yy = int(m.group("yy"))
     year = 2000 + yy if yy < 80 else 1900 + yy
     return CampaignMonth(year=year, month=mon)
+
+
+def parse_rollup_filename(name: str) -> CampaignMonth | None:
+    """Parse 'exp_JAN25_rollup.csv' → CampaignMonth(2025, 1). None if no match.
+
+    Two-digit year window: 00-79 → 20YY, 80-99 → 19YY.
+    """
+    return _parse_with(_ROLLUP_FILE_RE, name)
+
+
+def parse_decile_filename(name: str) -> CampaignMonth | None:
+    """Parse 'exp_JAN25_decile.csv' → CampaignMonth(2025, 1)."""
+    return _parse_with(_DECILE_FILE_RE, name)
 
 
 def iso_to_campaign_month(iso: str) -> CampaignMonth:
