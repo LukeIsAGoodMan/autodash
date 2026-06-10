@@ -334,6 +334,38 @@ quit;
     run;
 %mend;
 
+/* Reaggregate from an existing trm.<label>_finalresponse without rerunning
+   readmailfile / getresponse / finalresponse. Use when:
+     - trm.<label>_finalresponse already exists on disk and is trusted, AND
+     - you only need fresh rollup / decile CSV outputs (e.g. you changed
+       %rollup or one of the decile macros).
+   Safe to call repeatedly: %rank_deciles overwrites sc_decile / port_decile
+   in place; the rollup steps just re-emit the CSVs. */
+%macro run_one_month_from_existing(reportdate);
+    %local monthdate startdate labelname;
+    %let monthdate = %sysfunc(intnx(month, "&reportdate"d, 0, b));
+    %let startdate = %sysfunc(putn(&monthdate, date9.));
+    %let labelname = %sysfunc(putn(&monthdate, monyy5.));
+    %put NOTE: Reaggregating from existing trm.&labelname._finalresponse.;
+    options validvarname=any;
+    %rank_deciles(&labelname.);
+    %rollup(&startdate., &labelname.);
+    proc export data=&labelname._rollup
+        outfile="&folder./exp_&labelname._rollup.csv"
+        dbms=csv replace;
+    run;
+    %rollup_decile_sc(&labelname.);
+    proc export data=&labelname._decile_sc
+        outfile="&folder./exp_&labelname._decile_sc.csv"
+        dbms=csv replace;
+    run;
+    %rollup_decile_port(&labelname.);
+    proc export data=&labelname._decile_port
+        outfile="&folder./exp_&labelname._decile_port.csv"
+        dbms=csv replace;
+    run;
+%mend;
+
 %macro run_months(start=01JAN2025, end=01APR2026);
     %local i n monthdate reportdate;
     %let n = %sysfunc(intck(month, "&start"d, "&end"d));

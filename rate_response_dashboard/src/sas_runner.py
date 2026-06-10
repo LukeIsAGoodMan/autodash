@@ -36,7 +36,7 @@ _ERROR_LINE = re.compile(r"^ERROR(\s+\d+-\d+)?:", re.MULTILINE)
 
 # Macros we require for the pipeline to be runnable.
 _REQUIRED_MACROS = [
-    "run_one_month", "run_months", "rollup",
+    "run_one_month", "run_one_month_from_existing", "run_months", "rollup",
     "readmailfile_trm", "getresponse_trm", "finalresponse_trm",
 ]
 
@@ -214,7 +214,8 @@ class SASRunner:
         )
 
     def run_one_month_sas(self, campaign_month: str) -> dict:
-        """Run %run_one_month for a single 'YYYY-MM'."""
+        """Run %run_one_month for a single 'YYYY-MM' (full pipeline:
+        readmailfile → getresponse → finalresponse → rank → rollup → export)."""
         cm = iso_to_campaign_month(campaign_month)
         expected_csv = cm.rollup_filename
         log.info(
@@ -226,6 +227,23 @@ class SASRunner:
         return self._submit(
             f"%run_one_month({cm.sas_reportdate});",
             label=f"run_one_month_{campaign_month}",
+        )
+
+    def run_one_month_from_existing_sas(self, campaign_month: str) -> dict:
+        """Reaggregate from existing trm.<label>_finalresponse. Skips
+        readmailfile / getresponse / finalresponse. ~30s instead of ~5min
+        per month. Errors if trm.<label>_finalresponse does not exist.
+        """
+        cm = iso_to_campaign_month(campaign_month)
+        log.info(
+            "run_one_month_from_existing_sas: month=%s sas_reportdate=%s "
+            "sas_label=%s expected_csvs=[%s, %s, %s]",
+            campaign_month, cm.sas_reportdate, cm.sas_label,
+            cm.rollup_filename, cm.decile_sc_filename, cm.decile_port_filename,
+        )
+        return self._submit(
+            f"%run_one_month_from_existing({cm.sas_reportdate});",
+            label=f"run_one_month_from_existing_{campaign_month}",
         )
 
     def pull_sas_table(self, table_name: str, libref: str = "WORK") -> pd.DataFrame:

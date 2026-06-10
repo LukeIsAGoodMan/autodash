@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.ingest_decile import run_decile_ingest
 from src.ingest_rollups import run_ingest
-from src.sas_runner import SASError, run_sas_pipeline
+from src.sas_runner import SASError, open_sas, run_sas_pipeline
 from src.utils import iso_to_campaign_month, load_config, setup_logging
 
 
@@ -45,6 +45,11 @@ def main() -> int:
     p.add_argument("--force", action="store_true",
                    help="re-ingest every month even if the partition is up to date "
                         "(use after changing ingest logic, e.g. vs_band normalization)")
+    p.add_argument("--reuse-finalresponse", action="store_true",
+                   help="reuse existing trm.<label>_finalresponse instead of "
+                        "rebuilding it. ~30s/month instead of ~5min/month. "
+                        "Uses Python-side month loop calling "
+                        "%%run_one_month_from_existing rather than %%run_months.")
     args = p.parse_args()
 
     cfg = load_config()
@@ -68,9 +73,20 @@ def main() -> int:
 
     # ---- 1. SAS step --------------------------------------------------
     if not args.skip_sas:
-        log.info("Phase 1: SAS pull %s -> %s", args.start, args.end)
+        mode = ("from-existing-trm (fast)" if args.reuse_finalresponse
+                else "full pipeline")
+        log.info("Phase 1: SAS %s -> %s · mode=%s",
+                 args.start, args.end, mode)
         try:
-            run_sas_pipeline(args.start, args.end, cfg)
+            if args.reuse_finalresponse:
+                # Python loop over months; one SAS submit per month.
+                # ~30s/month, no readmailfile/getresponse/finalresponse.
+                with open_sas(cfg) as r:
+                    for m in months:
+                        r.run_one_month_from_existing_sas(m)
+            else:
+                # Single SAS submit of %run_months(...), full pipeline per month.
+                run_sas_pipeline(args.start, args.end, cfg)
         except SASError as e:
             log.error("SAS step failed: %s", e)
             return 2

@@ -44,6 +44,11 @@ def main() -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--month", help="single month to refresh, e.g. 2026-05")
     p.add_argument("--skip-sas", action="store_true")
+    p.add_argument("--reuse-finalresponse", action="store_true",
+                   help="reuse existing trm.<label>_finalresponse instead of "
+                        "rebuilding it via readmailfile/getresponse/"
+                        "finalresponse. ~30s/month instead of ~5min/month. "
+                        "Errors if trm table does not exist for the month.")
     args = p.parse_args()
 
     cfg = load_config()
@@ -76,10 +81,16 @@ def main() -> int:
 
     # ---- 1. SAS step ---------------------------------------------------
     if not args.skip_sas:
+        mode = ("from-existing-trm (fast)" if args.reuse_finalresponse
+                else "full rebuild")
+        log.info("SAS mode: %s", mode)
         try:
             with open_sas(cfg) as r:
                 for m in months:
-                    r.run_one_month_sas(m)
+                    if args.reuse_finalresponse:
+                        r.run_one_month_from_existing_sas(m)
+                    else:
+                        r.run_one_month_sas(m)
         except SASError as e:
             log.error("SAS step failed: %s", e)
             return 2
