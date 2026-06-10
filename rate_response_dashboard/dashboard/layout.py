@@ -336,12 +336,17 @@ def tab_rankorder() -> dbc.Tab:
         html.Div(id="rank-table-range", className="chart-meta"),
         dash_table.DataTable(
             id="rank-table",
-            page_size=12,
+            # Sized so both modes (sc=10, port=20) fit on a single page.
+            page_size=25,
             style_table={"overflowX": "auto"},
             style_cell={"padding": "8px", "fontFamily": "Segoe UI, sans-serif",
                         "fontSize": "12.5px"},
             style_data_conditional=[
                 {"if": {"row_index": "odd"}, "backgroundColor": "#fafbfd"},
+                # Highlight misrank rows for both flag glyphs.
+                {"if": {"filter_query": '{Misrank} = "⚠"', "column_id": "Misrank"},
+                 "backgroundColor": "#fdecea", "color": "#922b21",
+                 "fontWeight": "700"},
             ],
         ),
     ]))

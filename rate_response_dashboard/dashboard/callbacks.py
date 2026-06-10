@@ -17,7 +17,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import polars as pl
-from dash import Input, Output, State, dash_table, dcc, no_update
+from dash import Input, Output, State, dash_table, dcc, html, no_update
 
 from src import metrics
 from src.build_mart import list_partition_months, read_mart
