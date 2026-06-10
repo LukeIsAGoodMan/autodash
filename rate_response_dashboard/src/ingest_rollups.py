@@ -132,8 +132,19 @@ def plan_ingestion(cfg: dict, force: bool = False) -> list[IngestPlan]:
 
 # ----------------------------------------------------------- execution
 def _load_csv(path: Path) -> pl.DataFrame:
-    """Read a SAS-exported rollup CSV with permissive typing."""
-    df = pl.read_csv(str(path), infer_schema_length=10_000)
+    """Read a SAS-exported rollup CSV with permissive typing.
+
+    SAS `proc export` writes missing numeric values as a literal '.'. Without
+    telling polars about it, a column that is all-'.' (which happens whenever
+    EXP_RESPONSE_SCORE is missing for a whole month) gets inferred as String,
+    and downstream .sum() raises 'sum operation not supported for dtype str'.
+    Passing null_values=['', '.'] makes polars correctly parse those as null.
+    """
+    df = pl.read_csv(
+        str(path),
+        infer_schema_length=10_000,
+        null_values=["", "."],
+    )
     log.info("loaded %s: %d rows, columns=%s", path.name, df.height, df.columns)
     return df
 
@@ -221,6 +232,18 @@ def _prepare_for_mart(df: pl.DataFrame, cm: CampaignMonth, cfg: dict) -> pl.Data
     for c in flag_cols:
         if c in df.columns:
             df = df.with_columns(pl.col(c).cast(pl.Int32, strict=False))
+
+    # Numeric metric columns: belt-and-suspenders cast to Float64. If a column
+    # was inferred as String (because all-null markers slipped past the
+    # null_values config, or because SAS emitted something unusual), this
+    # coerces unparseable cells to null instead of crashing validation.
+    numeric_metric_cols = [
+        "volume", "responders", "Boards",
+        "expected_responses", "expected_responses_xpm",
+    ]
+    for c in numeric_metric_cols:
+        if c in df.columns and df[c].dtype != pl.Float64:
+            df = df.with_columns(pl.col(c).cast(pl.Float64, strict=False))
     return df
 
 
@@ -271,9 +294,14 @@ def execute_plan(plan: list[IngestPlan], cfg: dict) -> dict:
             summary["failed"] += 1
             discard_tmp_partition(mart_dir, p.cm)
             log.exception("[fail] %s: unexpected error", p.cm.iso)
+            # Duck-typed empty ValidationResult — make_load_log_row only reads
+            # `.stats` off it. The kwarg name is `result` (not `vr`); using
+            # `vr=` was a bug that turned a real failure into a TypeError and
+            # short-circuited the rest of the ingest loop.
+            stub = type("V", (), {"stats": {}})()
             row = make_load_log_row(
                 p.cm, p.csv_path, str(p.csv_mtime),
-                vr=type("V", (), {"stats": {}})(),  # empty stats
+                result=stub,
                 status="failed", message=f"exception: {e!r}",
             )
             append_load_log(log_path, row)
