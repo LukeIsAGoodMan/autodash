@@ -332,44 +332,38 @@ def tab_export(cfg: dict) -> dbc.Tab:
 
 # ------------------------------------------- shared filter row(s), no wrapper
 def _filter_inner(cfg: dict, prefix: str) -> html.Div:
-    """The filter dropdowns. Caller wraps in a .controls-bar if needed."""
+    """The filter dropdowns. Uniform widths (4 per row, md=3 each).
+    The 'Campaign months' cell contains two From/To single-selects for
+    picking an explicit time range, e.g. 2025-12 → 2026-03."""
+    months_cell = dbc.Col([
+        html.Label("Campaign months"),
+        dbc.Row([
+            dbc.Col(dcc.Dropdown(id=f"{prefix}-f-month-from",
+                                 placeholder="from", clearable=True), width=6),
+            dbc.Col(dcc.Dropdown(id=f"{prefix}-f-month-to",
+                                 placeholder="to", clearable=True), width=6),
+        ], className="g-1"),
+    ], md=3)
+
+    def col(label: str, suffix: str):
+        return dbc.Col([
+            html.Label(label),
+            dcc.Dropdown(id=f"{prefix}-{suffix}", multi=True, placeholder="all"),
+        ], md=3)
+
     return html.Div([
         dbc.Row([
-            dbc.Col([
-                html.Label("Campaign months"),
-                dcc.Dropdown(id=f"{prefix}-f-months", multi=True, placeholder="all"),
-            ], md=3),
-            dbc.Col([
-                html.Label("vs_band"),
-                dcc.Dropdown(id=f"{prefix}-f-vs", multi=True, placeholder="all"),
-            ], md=2),
-            dbc.Col([
-                html.Label("scorecard"),
-                dcc.Dropdown(id=f"{prefix}-f-scorecard", multi=True, placeholder="all"),
-            ], md=2),
-            dbc.Col([
-                html.Label("Prospect_type"),
-                dcc.Dropdown(id=f"{prefix}-f-prospect", multi=True, placeholder="all"),
-            ], md=2),
-            dbc.Col([
-                html.Label("rm_flag"),
-                dcc.Dropdown(id=f"{prefix}-f-rm", multi=True, placeholder="all"),
-            ], md=1),
-            dbc.Col([
-                html.Label("trm10_tier"),
-                dcc.Dropdown(id=f"{prefix}-f-trm", multi=True, placeholder="all"),
-            ], md=2),
+            months_cell,
+            col("vs_band",       "f-vs"),
+            col("scorecard",     "f-scorecard"),
+            col("Prospect_type", "f-prospect"),
         ], className="g-2"),
         dbc.Row([
-            dbc.Col([
-                html.Label("annual_fee"),
-                dcc.Dropdown(id=f"{prefix}-f-fee", multi=True, placeholder="all"),
-            ], md=3),
-            dbc.Col([
-                html.Label("times_mailed_12mo_cnt"),
-                dcc.Dropdown(id=f"{prefix}-f-mailed", multi=True, placeholder="all"),
-            ], md=3),
-        ], className="g-2 mt-1"),
+            col("rm_flag",                "f-rm"),
+            col("trm10_tier",             "f-trm"),
+            col("annual_fee",             "f-fee"),
+            col("times_mailed_12mo_cnt",  "f-mailed"),
+        ], className="g-2 mt-2"),
     ])
 
 

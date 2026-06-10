@@ -9,7 +9,6 @@ Major change vs the first draft:
 """
 from __future__ import annotations
 
-import io
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
@@ -72,18 +71,28 @@ def _apply_filters(df: pl.DataFrame, filters: dict) -> pl.DataFrame:
     return out
 
 
-def _apply_month_window(df: pl.DataFrame, selected_months: list | None,
+def _apply_month_window(df: pl.DataFrame,
+                        month_from: str | None,
+                        month_to: str | None,
                         default_n: int) -> pl.DataFrame:
-    """Month filter with a 'default to last N months' fallback.
+    """Month range filter with a 'default to last N months' fallback.
 
-    If the user has selected specific months, respect that selection.
-    Otherwise, when the mart has more than `default_n` months, truncate
-    to the most recent N. This keeps charts readable without forcing
-    the user to babysit a multi-select dropdown.
+    Behavior:
+      - Either side of the range is set -> explicit constraint; default
+        lookback is NOT additionally applied (user wants exactly that range).
+      - Both empty -> truncate to the most recent `default_n` months when
+        the mart has more, otherwise show everything.
+
+    `month_from` / `month_to` are inclusive 'YYYY-MM' strings.
+    Lexical comparison is safe because the partition key has fixed width.
     """
-    if selected_months:
-        return df.filter(pl.col("campaign_month").is_in(list(selected_months)))
     if "campaign_month" not in df.columns:
+        return df
+    if month_from or month_to:
+        if month_from:
+            df = df.filter(pl.col("campaign_month") >= month_from)
+        if month_to:
+            df = df.filter(pl.col("campaign_month") <= month_to)
         return df
     months = df["campaign_month"].unique().sort().to_list()
     if len(months) <= default_n:
@@ -265,14 +274,15 @@ def register_callbacks(app, cfg: dict) -> None:
 
     # ----------------------------------------------------------- filter options
     _filter_cols = {
-        "f-months": "campaign_month",
-        "f-vs": "vs_band",
-        "f-scorecard": "scorecard",
-        "f-prospect": "Prospect_type",
-        "f-rm": "rm_flag",
-        "f-trm": "trm10_tier",
-        "f-fee": "annual_fee",
-        "f-mailed": "times_mailed_12mo_cnt",
+        "f-month-from": "campaign_month",
+        "f-month-to":   "campaign_month",
+        "f-vs":         "vs_band",
+        "f-scorecard":  "scorecard",
+        "f-prospect":   "Prospect_type",
+        "f-rm":         "rm_flag",
+        "f-trm":        "trm10_tier",
+        "f-fee":        "annual_fee",
+        "f-mailed":     "times_mailed_12mo_cnt",
     }
 
     for prefix in ("pivot", "model", "export"):
@@ -295,7 +305,8 @@ def register_callbacks(app, cfg: dict) -> None:
         Input("pivot-suppress", "value"),
         Input("pivot-format", "value"),
         Input("pivot-color-mode", "value"),
-        Input("pivot-f-months", "value"),
+        Input("pivot-f-month-from", "value"),
+        Input("pivot-f-month-to", "value"),
         Input("pivot-f-vs", "value"),
         Input("pivot-f-scorecard", "value"),
         Input("pivot-f-prospect", "value"),
@@ -305,10 +316,11 @@ def register_callbacks(app, cfg: dict) -> None:
         Input("pivot-f-mailed", "value"),
     )
     def _pivot(row_dim, metric, suppress, fmt, color_mode,
-               f_months, f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
+               f_month_from, f_month_to,
+               f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
         lookback = cfg["dashboard"].get("default_lookback_months", 24)
         df = load_mart(cfg)
-        df = _apply_month_window(df, f_months, lookback)
+        df = _apply_month_window(df, f_month_from, f_month_to, lookback)
         df = _apply_filters(df, {
             "vs_band": f_vs,
             "scorecard": f_scorecard, "Prospect_type": f_prospect,
@@ -377,9 +389,11 @@ def register_callbacks(app, cfg: dict) -> None:
         cell_rules: list[dict] = []
         if color_mode == "mom":
             # MoM Δ: compare each cell with the prior month in the same row.
-            # Up → green tint; down → red tint; equal/null → no tint.
+            # Up → green; down → red. Intensity (background alpha) scales with
+            # |delta| relative to the largest |delta| in the visible table.
             month_cols = [c for c in metric_wide_num.columns
                           if c not in ("Row", "Overall")]
+            deltas: list[tuple[str, str, float]] = []
             for i in range(1, len(month_cols)):
                 col = month_cols[i]
                 prev = month_cols[i - 1]
@@ -389,17 +403,26 @@ def register_callbacks(app, cfg: dict) -> None:
                     if curr_v is None or prev_v is None \
                             or pd.isna(curr_v) or pd.isna(prev_v):
                         continue
-                    if curr_v == prev_v:
+                    delta = float(curr_v) - float(prev_v)
+                    if delta == 0:
                         continue
-                    rv = str(row_val).replace('"', '\\"')
-                    if curr_v > prev_v:
-                        bg, fg = "#d4edda", "#155724"   # soft green
+                    deltas.append((col, str(row_val), delta))
+            if deltas:
+                max_abs = max(abs(d[2]) for d in deltas)
+                # alpha range: 0.18 (barely visible) → 0.70 (saturated)
+                for col, row_val, delta in deltas:
+                    intensity = min(1.0, abs(delta) / max_abs) if max_abs > 0 else 0
+                    alpha = 0.18 + 0.52 * intensity
+                    if delta > 0:
+                        bg = f"rgba(46, 122, 82, {alpha:.2f})"   # GOOD green
                     else:
-                        bg, fg = "#f8d7da", "#721c24"   # soft red
+                        bg = f"rgba(179, 67, 74, {alpha:.2f})"   # BAD red
+                    rv = row_val.replace('"', '\\"')
                     cell_rules.append({
                         "if": {"column_id": col,
                                "filter_query": f'{{Row}} = "{rv}"'},
-                        "backgroundColor": bg, "color": fg,
+                        "backgroundColor": bg,
+                        "color": "#0e2238",
                     })
         else:
             # Volume bars: gradient width = cell volume / column total volume.
@@ -492,7 +515,8 @@ def register_callbacks(app, cfg: dict) -> None:
         Output("model-trm-range", "children"),
         Output("model-by-scorecard", "figure"),
         Output("model-sc-range", "children"),
-        Input("model-f-months", "value"),
+        Input("model-f-month-from", "value"),
+        Input("model-f-month-to", "value"),
         Input("model-f-vs", "value"),
         Input("model-f-scorecard", "value"),
         Input("model-f-prospect", "value"),
@@ -501,10 +525,11 @@ def register_callbacks(app, cfg: dict) -> None:
         Input("model-f-fee", "value"),
         Input("model-f-mailed", "value"),
     )
-    def _model(f_months, f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
+    def _model(f_month_from, f_month_to,
+               f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
         lookback = cfg["dashboard"].get("default_lookback_months", 24)
         df = load_mart(cfg)
-        df = _apply_month_window(df, f_months, lookback)
+        df = _apply_month_window(df, f_month_from, f_month_to, lookback)
         df = _apply_filters(df, {
             "vs_band": f_vs,
             "scorecard": f_scorecard, "Prospect_type": f_prospect,
@@ -625,7 +650,8 @@ def register_callbacks(app, cfg: dict) -> None:
         Output("export-download", "data"),
         Input("btn-export-csv", "n_clicks"),
         Input("btn-export-xlsx", "n_clicks"),
-        State("export-f-months", "value"),
+        State("export-f-month-from", "value"),
+        State("export-f-month-to", "value"),
         State("export-f-vs", "value"),
         State("export-f-scorecard", "value"),
         State("export-f-prospect", "value"),
@@ -636,21 +662,31 @@ def register_callbacks(app, cfg: dict) -> None:
         prevent_initial_call=True,
     )
     def _export(n_csv, n_xlsx,
-                f_months, f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
+                f_month_from, f_month_to,
+                f_vs, f_scorecard, f_prospect, f_rm, f_trm, f_fee, f_mailed):
         from dash import ctx
         if not ctx.triggered_id:
             return no_update
-        # Export respects exact user selections; no default lookback truncation.
-        df = _apply_filters(load_mart(cfg), {
-            "campaign_month": f_months, "vs_band": f_vs,
+        # Export respects the exact user range; no default lookback truncation.
+        df = load_mart(cfg)
+        if f_month_from:
+            df = df.filter(pl.col("campaign_month") >= f_month_from)
+        if f_month_to:
+            df = df.filter(pl.col("campaign_month") <= f_month_to)
+        df = _apply_filters(df, {
+            "vs_band": f_vs,
             "scorecard": f_scorecard, "Prospect_type": f_prospect,
             "rm_flag": f_rm, "trm10_tier": f_trm, "annual_fee": f_fee,
             "times_mailed_12mo_cnt": f_mailed,
         }).to_pandas()
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         if ctx.triggered_id == "btn-export-csv":
-            return dcc.send_data_frame(df.to_csv, f"rate_response_{ts}.csv", index=False)
-        buf = io.BytesIO()
-        with pd.ExcelWriter(buf, engine="openpyxl") as w:
-            df.to_excel(w, index=False, sheet_name="rollup")
-        return dcc.send_bytes(buf.getvalue(), f"rate_response_{ts}.xlsx")
+            return dcc.send_data_frame(df.to_csv,
+                                       f"rate_response_{ts}.csv",
+                                       index=False)
+        # dcc.send_data_frame handles BytesIO + MIME under the hood; works
+        # reliably whenever openpyxl is installed.
+        return dcc.send_data_frame(df.to_excel,
+                                   f"rate_response_{ts}.xlsx",
+                                   sheet_name="rollup",
+                                   index=False)
