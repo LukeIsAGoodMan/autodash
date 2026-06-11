@@ -219,7 +219,7 @@ proc sql;
             calculated responders/calculated volume as GRR,
             sum(NetResponse) as Boards,
             calculated Boards/calculated volume as NRR
-        from trm.&ds._finalresponse
+        from trm.&ds._finalresponse_&trm_user_suffix
             group by
                 Prospect_type, pqabandon_flag, prchargeoff_flag,
                 prclosure_flag, prdecline_flag, vs_band, annual_fee,
@@ -233,29 +233,34 @@ quit;
 
 
 /* Equal-volume decile rollups for the Rank Order tab.
+   All trm. tables are namespaced with _&trm_user_suffix (set in the Python
+   prelude from &sysuserid) so concurrent users never overwrite each other's
+   files under the shared TRM/Analysis2026Q2 folder.
    - sc_decile : within each scorecard, equal-volume 10-tile by TRM_Score
    - port_decile: across the whole portfolio, equal-volume 20-tile
    PSI tiers (total_decile, sc1..sc4_decile) computed in %assign_psi_tier
-   remain untouched and still live on trm.&ds._finalresponse — they're just
-   no longer the basis for the dashboard rank-order analytics.
+   remain on trm.&ds._finalresponse_<user>; they're just no longer the
+   basis for the dashboard rank-order analytics.
 */
 %macro rank_deciles(ds);
-proc sort data=trm.&ds._finalresponse;
+proc sort data=trm.&ds._finalresponse_&trm_user_suffix;
     by scorecard;
 run;
-proc rank data=trm.&ds._finalresponse out=trm.&ds._finalresponse
+proc rank data=trm.&ds._finalresponse_&trm_user_suffix
+          out=trm.&ds._finalresponse_&trm_user_suffix
           groups=10 descending;
     var TRM_Score;
     by scorecard;
     ranks sc_decile;
 run;
-proc rank data=trm.&ds._finalresponse out=trm.&ds._finalresponse
+proc rank data=trm.&ds._finalresponse_&trm_user_suffix
+          out=trm.&ds._finalresponse_&trm_user_suffix
           groups=20 descending;
     var TRM_Score;
     ranks port_decile;
 run;
-data trm.&ds._finalresponse;
-    set trm.&ds._finalresponse;
+data trm.&ds._finalresponse_&trm_user_suffix;
+    set trm.&ds._finalresponse_&trm_user_suffix;
     /* proc rank groups output is 0-based; shift to 1..N. Null score rows
        keep null deciles and are filtered out by the rollup queries. */
     if not missing(sc_decile)   then sc_decile   = sc_decile   + 1;
@@ -271,7 +276,7 @@ proc sql;
                count(*)           as volume,
                sum(GrossResponse) as responders,
                sum(NetResponse)   as Boards
-        from trm.&ds._finalresponse
+        from trm.&ds._finalresponse_&trm_user_suffix
         where sc_decile is not null
         group by scorecard, sc_decile
         order by scorecard, sc_decile;
@@ -285,7 +290,7 @@ proc sql;
                count(*)           as volume,
                sum(GrossResponse) as responders,
                sum(NetResponse)   as Boards
-        from trm.&ds._finalresponse
+        from trm.&ds._finalresponse_&trm_user_suffix
         where port_decile is not null
         group by port_decile
         order by port_decile;
@@ -307,7 +312,7 @@ quit;
     %readmailfile_trm(&startdate., &labelname.);
     %getresponse_trm(&startdate., &labelname.);
     %finalresponse_trm(&startdate., &labelname.);
-    data trm.&labelname._finalresponse;
+    data trm.&labelname._finalresponse_&trm_user_suffix;
         set &labelname._finalresponse;
         %assign_psi_tier;
     run;
@@ -346,7 +351,7 @@ quit;
     %let monthdate = %sysfunc(intnx(month, "&reportdate"d, 0, b));
     %let startdate = %sysfunc(putn(&monthdate, date9.));
     %let labelname = %sysfunc(putn(&monthdate, monyy5.));
-    %put NOTE: Reaggregating from existing trm.&labelname._finalresponse.;
+    %put NOTE: Reaggregating from existing trm.&labelname._finalresponse_&trm_user_suffix..;
     options validvarname=any;
     %rank_deciles(&labelname.);
     %rollup(&startdate., &labelname.);

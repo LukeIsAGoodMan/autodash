@@ -163,19 +163,29 @@ class SASRunner:
         return result
 
     def _prime_environment(self) -> None:
-        """Assign trm libname, set &folder, and inline the macro file content.
+        """Assign trm libname, set &folder, set &trm_user_suffix, and inline
+        the macro file content.
 
         We deliberately do NOT use %include here. The SAS session may be on a
         Unix server that cannot read C:\\Users\\... paths from the Python box.
+
+        &trm_user_suffix is appended to every trm.<label>_finalresponse table
+        name so concurrent users on the same SAS server never overwrite each
+        other's persistent finalresponse files. Derived from &sysuserid (the
+        SAS auto macro variable that holds the OS username), lowercased to
+        keep Unix file paths consistent.
         """
         prelude = (
             f"libname {self.trm_libname} '{self.trm_libpath}';\n"
             f"%let folder = {self.export_folder};\n"
+            "%let trm_user_suffix = %lowcase(&sysuserid);\n"
+            "%put NOTE: trm_user_suffix=&trm_user_suffix"
+            " (trm tables will be named trm.<label>_finalresponse_&trm_user_suffix);\n"
         )
         # Inline the .sas content so the SAS server compiles macros from text,
         # not from a file path it cannot reach.
         self._submit(prelude + self._sas_macro_text, label="prime")
-        log.info("SAS environment primed (libname + macro defs inlined)")
+        log.info("SAS environment primed (libname + &trm_user_suffix + macro defs inlined)")
 
     def _verify_macros_compiled(self) -> None:
         """Probe %sysmacexist for the macros we will call."""
