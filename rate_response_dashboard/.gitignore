@@ -4,6 +4,9 @@ data/rollup_csv/
 data/logs/
 tests/fixtures/
 
+# AI report artifacts — regenerated on every run, do not commit.
+reports/
+
 # Python
 __pycache__/
 *.py[cod]
