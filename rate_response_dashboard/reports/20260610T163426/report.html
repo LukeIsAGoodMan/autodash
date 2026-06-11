@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Rate Response Dashboard — Monthly Report</title>
+<style>
+  :root {
+    --primary: #1a4d8c;
+    --accent: #4a7bb7;
+    --good: #2e7a52;
+    --warn: #c98a25;
+    --bad: #b3434a;
+    --ink: #1f2933;
+    --muted: #5a6573;
+    --line: #e1e4e8;
+    --bg: #f7f8fa;
+    --card: #ffffff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--bg);
+    margin: 0;
+    padding: 32px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+  header {
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    color: white;
+    padding: 28px 32px;
+    border-radius: 8px;
+    margin-bottom: 24px;
+  }
+  header h1 { margin: 0; font-size: 24px; font-weight: 600; }
+  header .subtitle { margin-top: 6px; font-size: 13px; opacity: 0.9; }
+  header .watermark {
+    display: inline-block;
+    margin-top: 12px;
+    padding: 4px 10px;
+    background: rgba(255,255,255,0.18);
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 4px;
+    font-size: 12px;
+    letter-spacing: 0.3px;
+  }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 22px 26px;
+    margin-bottom: 18px;
+  }
+  section h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0 0 14px 0;
+    color: var(--primary);
+    border-bottom: 2px solid var(--primary);
+    padding-bottom: 6px;
+    display: inline-block;
+  }
+  section h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 18px 0 8px 0;
+    color: var(--ink);
+  }
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px;
+    margin-top: 6px;
+  }
+  .kpi {
+    border: 1px solid var(--line);
+    border-top: 3px solid var(--primary);
+    border-radius: 6px;
+    padding: 12px 14px;
+    background: var(--card);
+  }
+  .kpi .k-label { font-size: 12px; color: var(--muted); }
+  .kpi .k-value { font-size: 22px; font-weight: 600; margin-top: 4px; color: var(--ink); }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+  }
+  th, td {
+    text-align: right;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--line);
+  }
+  th:first-child, td:first-child { text-align: left; }
+  thead th {
+    background: #f0f2f5;
+    color: var(--ink);
+    font-weight: 600;
+    border-bottom: 1px solid var(--line);
+  }
+  tbody tr:nth-child(odd) { background: #fafbfd; }
+  .chip {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.2px;
+  }
+  .dir-up   { background: #e7f4ec; color: var(--good); }
+  .dir-down { background: #fbeceb; color: var(--bad);  }
+  .dir-flat { background: #eef0f3; color: var(--muted); }
+  .mat-full    { background: #e7f4ec; color: var(--good); }
+  .mat-partial { background: #fcf2e3; color: var(--warn); }
+  .mat-unknown { background: #eef0f3; color: var(--muted); }
+  .na { color: var(--muted); font-style: italic; }
+  .note {
+    background: #fbf9f2;
+    border-left: 3px solid var(--warn);
+    padding: 10px 14px;
+    color: var(--muted);
+    font-size: 12.5px;
+    margin-top: 10px;
+  }
+  .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 760px) { .twocol { grid-template-columns: 1fr; } }
+  footer { text-align: center; font-size: 12px; color: var(--muted); margin-top: 20px; }
+</style>
+</head>
+<body>
+<div class="container">
+
+  <header>
+    <h1>Rate Response Dashboard</h1>
+    <div class="subtitle">
+      Monthly report — latest month
+      <strong>2026-06</strong>
+      &middot; generated 2026-06-10T16:34:27
+    </div>
+    <span class="watermark">AI-generated draft &middot; analyst review required</span>
+  </header>
+
+  <section>
+    <h2>Data quality &amp; maturity</h2>
+    <p>
+      Latest month
+      <strong>2026-06</strong>
+      maturity:
+        <span class="chip mat-partial">partial</span>
+        &middot; XPM data:
+          <span class="chip mat-partial">unavailable</span>
+    </p>
+    <div class="note">
+      <strong>3</strong> month(s) not yet fully matured —
+      response window still open. Treat NRR / board rate for these months as
+      preliminary, not final: 2026-04, 2026-05, 2026-06.
+    </div>
+  </section>
+
+  <section>
+    <h2>Latest month KPIs (overall)</h2>
+    <p class="na">No data for latest month.</p>
+  </section>
+
+  <section>
+    <h2>Overall MoM &amp; YoY</h2>
+
+    <div class="twocol">
+      <div>      <h3>Month over Month</h3>
+      <table>
+        <thead><tr>
+          <th>Metric</th><th>Current</th><th>Prior</th><th>Δ</th><th>Direction</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td>nrr</td>
+          <td>
+1.03%
+          </td>
+          <td>
+1.02%
+          </td>
+          <td>
++1 bps
+          </td>
+          <td><span class="chip dir-up">up</span></td>
+        </tr>
+        <tr>
+          <td>board_rate</td>
+          <td>
+0.89%
+          </td>
+          <td>
+0.87%
+          </td>
+          <td>
++1 bps
+          </td>
+          <td><span class="chip dir-up">up</span></td>
+        </tr>
+        <tr>
+          <td>volume</td>
+          <td>
+15.00M          </td>
+          <td>
+15.03M          </td>
+          <td>
+−0.1%          </td>
+          <td><span class="chip dir-flat">flat</span></td>
+        </tr>
+        <tr>
+          <td>boards</td>
+          <td>
+132.8K          </td>
+          <td>
+131.3K          </td>
+          <td>
++1.2%          </td>
+          <td><span class="chip dir-up">up</span></td>
+        </tr>
+        </tbody>
+      </table>
+</div>
+      <div>      <h3>Year over Year</h3>
+      <table>
+        <thead><tr>
+          <th>Metric</th><th>Current</th><th>Prior</th><th>Δ</th><th>Direction</th>
+        </tr></thead>
+        <tbody>
+        <tr>
+          <td>nrr</td>
+          <td>
+1.03%
+          </td>
+          <td>
+1.02%
+          </td>
+          <td>
++1 bps
+          </td>
+          <td><span class="chip dir-flat">flat</span></td>
+        </tr>
+        <tr>
+          <td>board_rate</td>
+          <td>
+0.89%
+          </td>
+          <td>
+0.88%
+          </td>
+          <td>
++1 bps
+          </td>
+          <td><span class="chip dir-flat">flat</span></td>
+        </tr>
+        <tr>
+          <td>volume</td>
+          <td>
+15.00M          </td>
+          <td>
+14.92M          </td>
+          <td>
++0.5%          </td>
+          <td><span class="chip dir-up">up</span></td>
+        </tr>
+        <tr>
+          <td>boards</td>
+          <td>
+132.8K          </td>
+          <td>
+131.2K          </td>
+          <td>
++1.2%          </td>
+          <td><span class="chip dir-up">up</span></td>
+        </tr>
+        </tbody>
+      </table>
+</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>By product (annual_fee)</h2>
+    <table>
+      <thead><tr>
+        <th>Product</th><th>NRR (latest)</th><th>NRR (prior)</th>
+        <th>MoM Δ</th><th>Direction</th>
+      </tr></thead>
+      <tbody>
+      <tr>
+        <td>$0/$0</td>
+        <td>0.68%</td>
+        <td>0.69%</td>
+        <td>−0 bps</td>
+        <td><span class="chip dir-flat">flat</span></td>
+      </tr>
+      <tr>
+        <td>$39/$39</td>
+        <td>1.49%</td>
+        <td>1.48%</td>
+        <td>+1 bps</td>
+        <td><span class="chip dir-up">up</span></td>
+      </tr>
+      <tr>
+        <td>$75/$99</td>
+        <td>1.18%</td>
+        <td>1.18%</td>
+        <td>+0 bps</td>
+        <td><span class="chip dir-flat">flat</span></td>
+      </tr>
+      <tr>
+        <td>$95/$95</td>
+        <td>0.88%</td>
+        <td>0.88%</td>
+        <td>+0 bps</td>
+        <td><span class="chip dir-flat">flat</span></td>
+      </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Biggest segment NRR movers (MoM)</h2>
+    <table>
+      <thead><tr>
+        <th>Dim</th><th>Value</th><th>NRR (latest)</th>
+        <th>NRR (prior)</th><th>Δ</th><th>Direction</th>
+      </tr></thead>
+      <tbody>
+      <tr>
+        <td>vs_band</td>
+        <td>601-639</td>
+        <td>1.04%</td>
+        <td>1.01%</td>
+        <td>+4 bps</td>
+        <td><span class="chip dir-up">up</span></td>
+      </tr>
+      <tr>
+        <td>scorecard</td>
+        <td>15</td>
+        <td>1.03%</td>
+        <td>1.00%</td>
+        <td>+3 bps</td>
+        <td><span class="chip dir-up">up</span></td>
+      </tr>
+      <tr>
+        <td>Prospect_type</td>
+        <td>Closed Remarket</td>
+        <td>1.05%</td>
+        <td>1.02%</td>
+        <td>+3 bps</td>
+        <td><span class="chip dir-up">up</span></td>
+      </tr>
+      <tr>
+        <td>Prospect_type</td>
+        <td>Charge-Off</td>
+        <td>1.04%</td>
+        <td>1.01%</td>
+        <td>+3 bps</td>
+        <td><span class="chip dir-up">up</span></td>
+      </tr>
+      <tr>
+        <td>scorecard</td>
+        <td>11</td>
+        <td>1.04%</td>
+        <td>1.01%</td>
+        <td>+3 bps</td>
+        <td><span class="chip dir-up">up</span></td>
+      </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Model performance &amp; strategic choice</h2>
+
+    <h3>Headline rank-order (2026-06)</h3>
+    <table>
+      <thead><tr>
+        <th>Model</th><th>Scope</th><th>KS</th><th>AUC</th>
+        <th>Gini</th><th>Top-decile lift</th><th>Misrank rows</th>
+      </tr></thead>
+      <tbody>
+      <tr>
+        <td>TRM</td>
+        <td>Portfolio (TRM10 binning)</td>
+          <td>0.245</td>
+          <td>0.663</td>
+          <td>0.325</td>
+          <td>1.99×</td>
+          <td>2</td>
+      </tr>
+      <tr>
+        <td>XPM</td>
+        <td>Portfolio (XPM07 binning)</td>
+          <td colspan="5" class="na">Decile mart binned on XPM07 not available; ask SAS to emit exp_<MMMYY>_decile_port_xpm.csv to enable.</td>
+      </tr>
+      </tbody>
+    </table>
+
+    <h3>Calibration trend — A/E ratio by month</h3>
+    <table>
+      <thead><tr>
+        <th>Month</th><th>TRM A/E</th><th>XPM A/E</th><th>Maturity</th>
+      </tr></thead>
+      <tbody>
+        <tr>
+          <td>2025-04</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2025-05</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2025-06</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2025-07</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2025-08</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2025-09</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2025-10</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2025-11</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2025-12</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2026-01</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2026-02</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2026-03</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-full">full</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2026-04</td>
+          <td>
+1.00×
+          </td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="chip mat-partial">partial</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2026-05</td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="na">—</span>          </td>
+          <td>
+<span class="chip mat-partial">partial</span>
+          </td>
+        </tr>
+        <tr>
+          <td>2026-06</td>
+          <td>
+1.00×
+          </td>
+          <td>
+<span class="na">—</span>          </td>
+          <td>
+<span class="chip mat-partial">partial</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+    <div class="note">
+      Strategic swap estimate (replace TRM10 with XPM07 under same volume/board target)
+      is reserved for a future iteration once SAS emits an XPM-binned decile mart.
+    </div>
+  </section>
+
+  <section>
+    <h2>Appendix &middot; months in scope</h2>
+    <p>15 months: 2025-04, 2025-05, 2025-06, 2025-07, 2025-08, 2025-09, 2025-10, 2025-11, 2025-12, 2026-01, 2026-02, 2026-03, 2026-04, 2026-05, 2026-06</p>
+    <p style="color: var(--muted); font-size: 12px;">
+      Small-cell threshold: 100 &middot;
+      Maturity threshold: 3 months.
+    </p>
+  </section>
+
+  <footer>
+    Rate Response Dashboard — AI Report Generator &middot; Stage 1 (deterministic, no LLM)
+  </footer>
+</div>
+</body>
+</html>

@@ -2,6 +2,7 @@
 data/mart/
 data/rollup_csv/
 data/logs/
+tests/fixtures/
 
 # Python
 __pycache__/

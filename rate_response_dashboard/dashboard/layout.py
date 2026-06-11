@@ -11,6 +11,8 @@ from __future__ import annotations
 import dash_bootstrap_components as dbc
 from dash import dash_table, dcc, html
 
+from dashboard.tab_ai_report import tab_ai_report
+
 
 # ---------------------------------------------------------------- helpers
 def kpi_card_dual(title: str, latest_id: str, overall_id: str,
@@ -497,6 +499,7 @@ def build_layout(cfg: dict) -> html.Div:
                 tab_model(cfg),
                 tab_rankorder(),
                 tab_dq(),
+                tab_ai_report(),
                 tab_export(cfg),
             ],
             id="tabs",

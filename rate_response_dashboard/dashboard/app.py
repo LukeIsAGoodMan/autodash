@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import dashboard.plotly_template  # noqa: F401, E402  — registers omni_light as default
 from dashboard.callbacks import register_callbacks  # noqa: E402
+from dashboard.callbacks_ai import register_ai_callbacks  # noqa: E402
 from dashboard.layout import build_layout            # noqa: E402
 from src.utils import load_config, setup_logging     # noqa: E402
 
@@ -33,6 +34,7 @@ def create_app(cfg: dict | None = None) -> dash.Dash:
     )
     app.layout = build_layout(cfg)
     register_callbacks(app, cfg)
+    register_ai_callbacks(app, cfg)
     return app
 
 
