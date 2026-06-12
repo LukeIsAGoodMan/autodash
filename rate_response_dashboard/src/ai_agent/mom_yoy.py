@@ -139,24 +139,26 @@ def _grouped_diffs(
 def _biggest_movers(facts: ReportFacts, top_k: int) -> list[Movement]:
     """Rank segment-level NRR MoM movements by absolute bps change.
 
-    Only includes segments where both months have nrr defined (filters out
-    small-cell-suppressed cells). One winners list across all segment dims.
+    Walks `segment_trend` (which carries all months) and isolates the two
+    most-recent months for each dim. Only includes segments where both
+    months have nrr defined (filters out small-cell-suppressed cells).
     """
     movers: list[Movement] = []
-    for dim, latest_rows in facts.segment_latest.items():
-        prior_rows = facts.segment_prior.get(dim, [])
-        prior_by_val = {r.dim_value: r for r in prior_rows}
-        for r in latest_rows:
-            prv = prior_by_val.get(r.dim_value)
-            if prv is None:
+    for dim, rows in facts.segment_trend.items():
+        months = sorted({r.campaign_month for r in rows})
+        if len(months) < 2:
+            continue
+        latest_m, prior_m = months[-1], months[-2]
+        latest = {r.dim_value: r for r in rows if r.campaign_month == latest_m}
+        prior = {r.dim_value: r for r in rows if r.campaign_month == prior_m}
+        for v, cur in latest.items():
+            prv = prior.get(v)
+            if prv is None or cur.nrr is None or prv.nrr is None:
                 continue
-            if r.nrr is None or prv.nrr is None:
-                continue
-            mv = _make_movement(
-                dim, r.dim_value, "nrr", "MoM",
-                r.campaign_month, prv.campaign_month, r.nrr, prv.nrr,
-            )
-            movers.append(mv)
+            movers.append(_make_movement(
+                dim, v, "nrr", "MoM", cur.campaign_month, prv.campaign_month,
+                cur.nrr, prv.nrr,
+            ))
     movers.sort(key=lambda m: abs(m.delta_bps or 0.0), reverse=True)
     return movers[:top_k]
 

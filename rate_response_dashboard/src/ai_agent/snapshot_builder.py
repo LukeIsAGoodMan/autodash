@@ -1,7 +1,7 @@
 """Mart → ReportFacts.
 
 This is the only module in `ai_agent/` that reads the rollup mart. Downstream
-analysis modules (mom_yoy, model_compare, future LLM agents) must consume
+analysis modules (mom_yoy, mix_analysis, big_mac, etc.) must consume
 ReportFacts and not touch parquet directly — that keeps the I/O surface
 small and the analysis layer trivially testable with in-memory fixtures.
 
@@ -23,14 +23,11 @@ from src.utils import now_iso
 from .facts import KPIRow, MaturityInfo, ReportFacts
 
 
-# Segment dims to surface in `ReportFacts.segment_latest`. Order matters —
-# it's the order the renderer walks. Keep this list pragmatic: dims with
-# enough cardinality to be useful but not so much they overwhelm a report.
-DEFAULT_SEGMENT_DIMS: tuple[str, ...] = (
-    "vs_band",
-    "scorecard",
-    "Prospect_type",
-    "rm_flag",
+# Default slice dims used when config provides no `ai_agent.slice_dims`.
+# Order matters — it's the order the renderer walks.
+DEFAULT_SLICE_DIMS: tuple[str, ...] = (
+    "annual_fee", "vs_band", "scorecard", "Prospect_type",
+    "rm_flag", "times_mailed_12mo_cnt",
 )
 
 
@@ -38,7 +35,7 @@ def build(
     rollup_df: pl.DataFrame,
     maturity: dict[str, MaturityInfo],
     cfg: dict,
-    segment_dims: Iterable[str] = DEFAULT_SEGMENT_DIMS,
+    slice_dims: Iterable[str] | None = None,
 ) -> ReportFacts:
     """Aggregate the rollup mart into a ReportFacts bundle.
 
@@ -53,9 +50,13 @@ def build(
             maturity={},
             overall_trend=[],
             product_trend=[],
-            segment_latest={},
         )
 
+    ai_cfg = cfg.get("ai_agent", {})
+    bm_cfg = ai_cfg.get("big_mac", {})
+    if slice_dims is None:
+        slice_dims = ai_cfg.get("slice_dims") or DEFAULT_SLICE_DIMS
+    slice_dims = list(slice_dims)
     threshold = int(cfg.get("dashboard", {}).get("small_cell_threshold", 100))
 
     months = sorted(rollup_df["campaign_month"].unique().to_list())
@@ -63,37 +64,30 @@ def build(
 
     overall = metrics.aggregate_by(rollup_df, group_dims=["campaign_month"])
     product = metrics.aggregate_by(rollup_df, group_dims=["annual_fee", "campaign_month"])
-    # Small-cell suppression for product trend rows — a tiny product slice
-    # would have noisy rates; counts are kept.
     product = metrics.suppress_small_cells(product, threshold=threshold)
 
     overall_rows = [_row_to_kpi("overall", None, r) for r in overall.iter_rows(named=True)]
     product_rows = [
-        _row_to_kpi("product", r["annual_fee"], r) for r in product.iter_rows(named=True)
+        _row_to_kpi("product", _str_or_none(r["annual_fee"]), r)
+        for r in product.iter_rows(named=True)
     ]
 
-    prior = months[-2] if len(months) >= 2 else None
-    latest_df = rollup_df.filter(pl.col("campaign_month") == latest)
-    prior_df = (
-        rollup_df.filter(pl.col("campaign_month") == prior) if prior else None
-    )
-    segment_latest: dict[str, list[KPIRow]] = {}
-    segment_prior: dict[str, list[KPIRow]] = {}
-    for dim in segment_dims:
-        if dim not in latest_df.columns:
+    segment_trend: dict[str, list[KPIRow]] = {}
+    for dim in slice_dims:
+        if dim not in rollup_df.columns:
             continue
-        seg = metrics.aggregate_by(latest_df, group_dims=[dim, "campaign_month"])
+        seg = metrics.aggregate_by(rollup_df, group_dims=[dim, "campaign_month"])
         seg = metrics.suppress_small_cells(seg, threshold=threshold)
-        segment_latest[dim] = [
-            _row_to_kpi(dim, _str_or_none(r.get(dim)), r) for r in seg.iter_rows(named=True)
+        segment_trend[dim] = [
+            _row_to_kpi(dim, _str_or_none(r.get(dim)), r)
+            for r in seg.iter_rows(named=True)
         ]
-        if prior_df is not None:
-            segp = metrics.aggregate_by(prior_df, group_dims=[dim, "campaign_month"])
-            segp = metrics.suppress_small_cells(segp, threshold=threshold)
-            segment_prior[dim] = [
-                _row_to_kpi(dim, _str_or_none(r.get(dim)), r)
-                for r in segp.iter_rows(named=True)
-            ]
+
+    # Big Mac cohort — pre-computed here because filtering raw rollup_df is
+    # cheaper and cleaner than passing it around.
+    bm_trend, bm_drill_trend, drill_dim = _big_mac_slices(
+        rollup_df, bm_cfg, threshold
+    )
 
     return ReportFacts(
         generated_at=now_iso(),
@@ -102,8 +96,10 @@ def build(
         maturity={m: maturity.get(m, MaturityInfo(m, "unknown", False)) for m in months},
         overall_trend=overall_rows,
         product_trend=product_rows,
-        segment_latest=segment_latest,
-        segment_prior=segment_prior,
+        segment_trend=segment_trend,
+        big_mac_trend=bm_trend,
+        big_mac_by_drill_trend=bm_drill_trend,
+        big_mac_drill_dim=drill_dim,
     )
 
 
@@ -132,6 +128,69 @@ def load_maturity(cfg: dict) -> dict[str, MaturityInfo]:
             has_xpm = (row.get("has_xpm") or "").strip().lower() in ("1", "true", "yes")
             out[cm] = MaturityInfo(campaign_month=cm, status=status, has_xpm=has_xpm)
     return out
+
+
+# ---------------------------------------------------------------- Big Mac
+
+
+def big_mac_filter_expr(bm_cfg: dict) -> pl.Expr | None:
+    """Build a Polars filter expression from the ai_agent.big_mac config block.
+
+    Returns None when the config block is empty (no Big Mac defined). Keys
+    ending in `_in` are treated as set-membership checks; everything else as
+    equality. Centralized here so callers don't reinvent the rule and so
+    a single config edit propagates to every consumer (snapshot, big_mac.py).
+    """
+    if not bm_cfg:
+        return None
+    parts: list[pl.Expr] = []
+    for key, val in bm_cfg.items():
+        if key == "drill_dim":
+            continue  # consumed by big_mac.py, not part of filter
+        if key.endswith("_in"):
+            col = key[:-3]
+            parts.append(pl.col(col).is_in(list(val)))
+        else:
+            parts.append(pl.col(key) == val)
+    if not parts:
+        return None
+    expr = parts[0]
+    for p in parts[1:]:
+        expr = expr & p
+    return expr
+
+
+def _big_mac_slices(
+    rollup_df: pl.DataFrame, bm_cfg: dict, threshold: int,
+) -> tuple[list[KPIRow], list[KPIRow], str | None]:
+    expr = big_mac_filter_expr(bm_cfg)
+    drill_dim = bm_cfg.get("drill_dim") if bm_cfg else None
+    if expr is None:
+        return [], [], drill_dim
+    # Skip filter columns the mart doesn't have rather than crashing.
+    missing = [k for k in bm_cfg if k not in ("drill_dim",)
+               and (k[:-3] if k.endswith("_in") else k) not in rollup_df.columns]
+    if missing:
+        return [], [], drill_dim
+    subset = rollup_df.filter(expr)
+    if subset.is_empty():
+        return [], [], drill_dim
+
+    bm_overall = metrics.aggregate_by(subset, group_dims=["campaign_month"])
+    bm_trend = [_row_to_kpi("big_mac", None, r) for r in bm_overall.iter_rows(named=True)]
+
+    bm_by_drill: list[KPIRow] = []
+    if drill_dim and drill_dim in subset.columns:
+        bm_drill = metrics.aggregate_by(subset, group_dims=[drill_dim, "campaign_month"])
+        bm_drill = metrics.suppress_small_cells(bm_drill, threshold=threshold)
+        bm_by_drill = [
+            _row_to_kpi(f"big_mac/{drill_dim}", _str_or_none(r.get(drill_dim)), r)
+            for r in bm_drill.iter_rows(named=True)
+        ]
+    return bm_trend, bm_by_drill, drill_dim
+
+
+# ---------------------------------------------------------------- helpers
 
 
 def _row_to_kpi(dim: str, dim_value: str | None, r: dict) -> KPIRow:

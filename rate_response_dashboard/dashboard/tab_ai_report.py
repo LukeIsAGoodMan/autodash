@@ -34,14 +34,26 @@ def tab_ai_report() -> dbc.Tab:
         ),
     ], className="controls-bar")
 
+    # Wrap the iframe in dcc.Loading so the user sees a clear "in progress"
+    # signal while the deterministic pipeline + LLM calls are running.
+    # The overlay vanishes automatically when the callback returns srcDoc.
     preview = dbc.Card(
         dbc.CardBody([
             html.H6("Report preview"),
-            html.Iframe(
-                id="ai-report-iframe",
-                srcDoc="<div style='font-family:Segoe UI;padding:24px;color:#5a6573'>"
-                       "Click <strong>Generate report</strong> to build the latest report.</div>",
-                style={"width": "100%", "height": "1200px", "border": "1px solid #e1e4e8"},
+            dcc.Loading(
+                id="ai-report-loading",
+                type="default",         # animated circle overlay
+                color="#1f77b4",
+                children=html.Iframe(
+                    id="ai-report-iframe",
+                    srcDoc=(
+                        "<div style='font-family:Segoe UI;padding:24px;color:#5a6573'>"
+                        "Click <strong>Generate report</strong> to build the latest report."
+                        "</div>"
+                    ),
+                    style={"width": "100%", "height": "1200px",
+                           "border": "1px solid #e1e4e8"},
+                ),
             ),
         ]),
         className="mb-3",

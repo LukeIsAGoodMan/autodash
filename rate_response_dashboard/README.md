@@ -115,6 +115,7 @@ user at a time.
 | **Rank Order** (P4) | KS / AUC / Gini / Top decile lift + 4 business KPIs; cumulative capture curve with 45° reference; response rate by decile bar; KS-over-time trend; decile detail table with **per-decile KS** + **Misrank** ⚠ flag. Scorecard filter routes: All → portfolio mart (20 deciles); 1–4 → scorecard mart (10 deciles per scorecard) |
 | **Data Quality** | Per-partition table: row count, sums, `has_xpm`, `sas_run_date`, **`maturity_status`** |
 | **Export** | CSV / Excel download of the currently filtered + aggregated mart |
+| **AI Report** | One-click monthly narrative report (HTML). Six analytical sections (Headline KPIs → Population mix → Big Mac cohort → Top combinations → Model catch → TRM vs XPM). Optional LLM commentary with `material_movers` (green Focus chips) + `noise_flags` (gray Noise chips). Loading overlay while generating; per-slot fallback explains why if the LLM step fails. |
 
 ### Filters (consistent across Pivot / Model / Export)
 
@@ -125,6 +126,108 @@ user at a time.
   `rm_flag`, `trm10_tier`, `annual_fee`, `times_mailed_12mo_cnt`
 - When all month inputs are empty, the dashboard restricts to the most recent
   `default_lookback_months` (default 24)
+
+---
+
+## AI Report Generator
+
+A second, narrative-first surface that lives in the AI Report tab. Reads
+the same rollup + decile marts as the rest of the dashboard, runs a
+deterministic 6-section pipeline (no LLM required), and optionally adds
+LLM-written commentary under each chart.
+
+### Pipeline
+
+```
+read_mart ─┐
+           ├─→ snapshot_builder ─→ mom_yoy ─→ mix_analysis ─┐
+read_decile┘                                                 │
+                                                             ↓
+                                            slice_trends / big_mac /
+                                            combinations / model_catch /
+                                            model_compare
+                                                             ↓
+                                                       ReportPackage
+                                                             ↓
+                          chart_builder (stacked-bar volume + overlay rate line)
+                                                             ↓
+                          [optional] LLM commentary writer (per section)
+                                                             ↓
+                          renderer (Jinja2 → self-contained HTML)
+                                                             ↓
+                       reports/<timestamp>/report.html  +  iframe preview
+```
+
+Each commentary slot the LLM populates carries:
+
+- `headline` — one declarative sentence
+- `body` — 40–120 words, no causal language unless backed by a PAF event (Stage 3)
+- `material_movers` — the analyst's focus list (rendered as green chips)
+- `noise_flags` — movers to demote (rendered as gray chips)
+
+The LLM is forced to commit to a materiality call rather than just
+restating the chart.
+
+### Configuration
+
+Add to `config/config.yaml`:
+
+```yaml
+ai_agent:
+  llm:
+    provider: stub          # stub | openai | gemini
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+    timeout_seconds: 30
+    enabled: false          # flip to true when ready; defaults off
+  chart_lookback_months: 15
+  slice_dims: [annual_fee, vs_band, scorecard, Prospect_type, rm_flag, times_mailed_12mo_cnt]
+  big_mac:
+    Prospect_type: "Prospecting"
+    rm_flag: 0
+    times_mailed_12mo_cnt: 0
+    trm10_tier_in: [1, 21]
+    drill_dim: "vs_band"
+  combinations:
+    dim_pairs:
+      - [annual_fee, vs_band]
+      - [annual_fee, Prospect_type]
+      # ...
+    min_combo_volume: 5000
+    top_k: 8
+```
+
+Environment overrides (handy for switching providers without editing config):
+
+```
+AI_REPORT_LLM_PROVIDER=openai      # or gemini, stub
+AI_REPORT_LLM_MODEL=gpt-4o
+OPENAI_API_KEY=sk-...              # name comes from api_key_env
+```
+
+### Graceful failure
+
+The LLM step **never raises out of the pipeline**. If anything goes
+wrong, the affected commentary slot is filled with a fallback whose
+`headline` and `body` name the reason:
+
+| Failure mode | What you see |
+|---|---|
+| API key env var unset | Every slot's headline: `Commentary unavailable — Environment variable OPENAI_API_KEY is not set.` |
+| One section's API call fails | Only that section's slots show the fallback; other sections render real commentary |
+| LLM returns zero slots | That section's expected slots filled with `"LLM returned an empty slots list"` |
+| LLM omits an expected slot | Missing slot filled with `"LLM omitted this slot from its response"` |
+
+A gray "Noise" chip with the reason also appears under the fallback
+headline so the reader spots dead commentary at a glance.
+
+### Provider status
+
+| Provider | State | Use case |
+|---|---|---|
+| `stub` | Working — returns a canned non-LLM response, safe default | Offline / CI |
+| `openai` | Working — `gpt-4o` via `chat.completions.parse` with strict structured output | Mac dev (peiyaohe2's key) |
+| `gemini` | **Placeholder — raises on construct** | Needs to be wired up before Windows production validation. Interface (`generate_structured`) and schema (`SectionCommentary`) are provider-agnostic, so this is purely an SDK-binding job inside `src/ai_agent/llm/gemini_client.py` |
 
 ---
 
@@ -291,9 +394,54 @@ pytest tests/
 
 ## Implementation roadmap (status)
 
+### Dashboard track
+
 - ✅ **Phase 1** — Python scan + parquet mart (`ingest_rollups`, `build_mart`)
 - ✅ **Phase 2** — Validation + reconciliation (`validation.py`, load_log, validation_summary)
 - ✅ **Phase 3** — Dash dashboard (6 tabs, blue/white theme, sticky filter bar, MoM color, range filters)
 - ✅ **Phase 4** — Decile mart + Rank Order tab + KS / AUC / Gini / Misrank + maturity status
 - ⬜ **Phase 5** — Production deployment (waitress + NSSM as Windows Service); email alerts on `status==failed` rows in load_log.csv
 - ⬜ **Phase 6** — Optional: Airflow / Control-M integration if the schedule grows beyond Windows Task Scheduler
+
+### AI agent track
+
+- ✅ **Stage 1** — Deterministic 6-section pipeline + chart builder + Jinja2
+  HTML renderer + AI Report tab with iframe preview
+- ✅ **Stage 2** — LLM commentary: provider-agnostic factory (stub / openai /
+  gemini-placeholder), Pydantic structured output, per-section prompts with
+  few-shot prioritization examples, materiality chips (Focus / Noise),
+  graceful per-slot fallback when the LLM step fails, loading spinner +
+  client-side immediate-feedback on Generate
+- 🔄 **Sprint A — Windows + Gemini production validation** *(next, immediate)*
+  - Wire up `GeminiClient` against the company Gemini Enterprise SDK
+    (interface contract already in `client.py`)
+  - Run the full pipeline against the real production mart on the Windows
+    box; surface and fix any dim-shape edge cases (unseen `scorecard`
+    values, empty per-dim slices, XPM gaps on different months)
+  - Confirm the loading overlay + fallback path behave correctly when
+    Gemini Enterprise is or is not reachable
+- ⬜ **Sprint B — Cross-section synthesis + audit pass**
+  - Reorder section dispatch so the per-dim Section B builders run first
+    and the B-summary builder runs last with access to their outputs;
+    extend builder signature to accept `prior_slots: dict`. Lets B-summary
+    write "out of these 6 dims, $95/$95 is the dominant mover; rm_flag is
+    noise" instead of just listing them
+  - Add a second-pass audit step: same Gemini Enterprise endpoint, fresh
+    system prompt that frames the model as an *independent quality
+    reviewer*. Reviewer reads the Stage-2 commentary + the underlying
+    facts and flags: unit bugs (bps vs pp confusion), missing XPM caveats,
+    numbers not in the source facts, cross-section contradictions. Output
+    becomes a banner at the top of each section
+- ⬜ **Stage 3 — PAF integration** *(2–3 weeks)*
+  - LLM-based PDF extraction agent reads the analyst-maintained PAF
+    documents and emits structured `PAFEvent` records (event type, affected
+    dim, effective date range, expected direction)
+  - Time-window + dim join against `ReportPackage` movers
+  - Prompt upgrade: when a mover matches a PAFEvent, **unlock** causal
+    language ("X coincides with the credit policy change on 2026-04
+    affecting this segment") and require a citation to the PAFEvent id
+- ⬜ **Stage 4 — Polish for monthly cadence** *(after PAF lands)*
+  - Decile-drift / segment-migration view from the so-far-unused
+    `decile_sc` mart
+  - Email delivery + archive of the monthly HTML
+  - Optional per-product report variants

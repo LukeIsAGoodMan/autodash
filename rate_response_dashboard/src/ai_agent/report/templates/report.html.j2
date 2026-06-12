@@ -19,138 +19,199 @@
   * { box-sizing: border-box; }
   body {
     font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Helvetica, Arial, sans-serif;
-    color: var(--ink);
-    background: var(--bg);
-    margin: 0;
-    padding: 32px;
-    font-size: 14px;
-    line-height: 1.5;
+    color: var(--ink); background: var(--bg); margin: 0; padding: 32px;
+    font-size: 14px; line-height: 1.5;
   }
   .container { max-width: 1200px; margin: 0 auto; }
   header {
     background: linear-gradient(135deg, var(--primary), var(--accent));
-    color: white;
-    padding: 28px 32px;
-    border-radius: 8px;
-    margin-bottom: 24px;
+    color: white; padding: 28px 32px; border-radius: 8px; margin-bottom: 24px;
   }
   header h1 { margin: 0; font-size: 24px; font-weight: 600; }
   header .subtitle { margin-top: 6px; font-size: 13px; opacity: 0.9; }
   header .watermark {
-    display: inline-block;
-    margin-top: 12px;
-    padding: 4px 10px;
-    background: rgba(255,255,255,0.18);
-    border: 1px solid rgba(255,255,255,0.3);
-    border-radius: 4px;
-    font-size: 12px;
-    letter-spacing: 0.3px;
+    display: inline-block; margin-top: 12px; padding: 4px 10px;
+    background: rgba(255,255,255,0.18); border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 4px; font-size: 12px; letter-spacing: 0.3px;
   }
   section {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 22px 26px;
-    margin-bottom: 18px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 8px;
+    padding: 22px 26px; margin-bottom: 18px;
   }
   section h2 {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0 0 14px 0;
-    color: var(--primary);
-    border-bottom: 2px solid var(--primary);
-    padding-bottom: 6px;
-    display: inline-block;
+    font-size: 16px; font-weight: 600; margin: 0 0 14px 0; color: var(--primary);
+    border-bottom: 2px solid var(--primary); padding-bottom: 6px; display: inline-block;
   }
-  section h3 {
-    font-size: 14px;
-    font-weight: 600;
-    margin: 18px 0 8px 0;
-    color: var(--ink);
-  }
+  section h3 { font-size: 14px; font-weight: 600; margin: 18px 0 8px 0; color: var(--ink); }
   .kpi-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
-    gap: 12px;
-    margin-top: 6px;
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 12px; margin-top: 6px;
   }
   .kpi {
-    border: 1px solid var(--line);
-    border-top: 3px solid var(--primary);
-    border-radius: 6px;
-    padding: 12px 14px;
-    background: var(--card);
+    border: 1px solid var(--line); border-top: 3px solid var(--primary);
+    border-radius: 6px; padding: 12px 14px; background: var(--card);
   }
   .kpi .k-label { font-size: 12px; color: var(--muted); }
   .kpi .k-value { font-size: 22px; font-weight: 600; margin-top: 4px; color: var(--ink); }
-  table {
-    border-collapse: collapse;
-    width: 100%;
-    font-size: 13px;
-  }
-  th, td {
-    text-align: right;
-    padding: 8px 10px;
-    border-bottom: 1px solid var(--line);
-  }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: right; padding: 8px 10px; border-bottom: 1px solid var(--line); }
   th:first-child, td:first-child { text-align: left; }
-  thead th {
-    background: #f0f2f5;
-    color: var(--ink);
-    font-weight: 600;
-    border-bottom: 1px solid var(--line);
-  }
+  thead th { background: #f0f2f5; color: var(--ink); font-weight: 600; border-bottom: 1px solid var(--line); }
   tbody tr:nth-child(odd) { background: #fafbfd; }
   .chip {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 12px;
-    font-size: 11.5px;
-    font-weight: 600;
-    letter-spacing: 0.2px;
+    display: inline-block; padding: 2px 8px; border-radius: 12px;
+    font-size: 11.5px; font-weight: 600; letter-spacing: 0.2px;
   }
-  .dir-up   { background: #e7f4ec; color: var(--good); }
-  .dir-down { background: #fbeceb; color: var(--bad);  }
-  .dir-flat { background: #eef0f3; color: var(--muted); }
+  .dir-up      { background: #e7f4ec; color: var(--good); }
+  .dir-down    { background: #fbeceb; color: var(--bad); }
+  .dir-flat    { background: #eef0f3; color: var(--muted); }
   .mat-full    { background: #e7f4ec; color: var(--good); }
   .mat-partial { background: #fcf2e3; color: var(--warn); }
   .mat-unknown { background: #eef0f3; color: var(--muted); }
+  .v-match   { background: #e7f4ec; color: var(--good); }
+  .v-partial { background: #fcf2e3; color: var(--warn); }
+  .v-miss    { background: #fbeceb; color: var(--bad); }
+  .v-na      { background: #eef0f3; color: var(--muted); }
   .na { color: var(--muted); font-style: italic; }
   .note {
-    background: #fbf9f2;
-    border-left: 3px solid var(--warn);
-    padding: 10px 14px;
-    color: var(--muted);
-    font-size: 12.5px;
-    margin-top: 10px;
+    background: #fbf9f2; border-left: 3px solid var(--warn);
+    padding: 10px 14px; color: var(--muted); font-size: 12.5px; margin-top: 10px;
+  }
+  .placeholder {
+    background: #f4f6f9; border: 1px dashed var(--line);
+    padding: 14px; color: var(--muted); font-size: 12.5px; border-radius: 4px;
+    text-align: center;
+  }
+  /* Reserve a quiet, visibly-distinct slot under every chart for LLM
+     commentary in Stage 2. Style is deliberately understated so it doesn't
+     compete with the data when commentary is absent. */
+  .commentary {
+    border: 1px dashed #cdd5dd; border-radius: 6px; padding: 12px 14px;
+    margin: 8px 0 18px 0; background: #f9fafc;
+    min-height: 72px;
+  }
+  .commentary .commentary-label {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.6px; text-transform: uppercase;
+    color: #8a95a3; margin-bottom: 6px;
+  }
+  .commentary .commentary-body {
+    color: var(--muted); font-size: 12.5px; line-height: 1.55;
+  }
+  .commentary .commentary-body:empty::before {
+    content: "AI commentary will appear here in Stage 2. Reserved.";
+    font-style: italic; color: #aab2bd;
+  }
+  .commentary .commentary-body strong {
+    display: block; color: var(--ink); margin-bottom: 6px; font-size: 13.5px;
+  }
+  .commentary .commentary-body p { margin: 0; }
+  .section-summary {
+    background: #f9fafc; border-left: 3px solid var(--primary);
+    padding: 12px 16px; margin: 6px 0 14px 0;
+    font-size: 13px; color: var(--ink);
+  }
+  .section-summary strong { color: var(--primary); display: block; margin-bottom: 4px; }
+  .section-summary p { margin: 0; }
+  /* Materiality chips: forces the LLM to commit to a focus/noise call so
+     the reader doesn't have to re-read the body to find the takeaway. */
+  .mover-tags { margin: 6px 0; font-size: 11.5px; }
+  .mover-tags .tag-label {
+    color: var(--muted); font-weight: 600; margin-right: 6px;
+    text-transform: uppercase; letter-spacing: 0.4px; font-size: 10.5px;
+  }
+  .mover-tags .tag {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    margin-right: 4px; margin-bottom: 3px; border: 1px solid;
+  }
+  .mover-tags .tag-material { background: #e6f4ea; color: #137333; border-color: #b7dfc4; }
+  .mover-tags .tag-noise    { background: #f3f4f6; color: #7c8693; border-color: #d9dde3; }
+  .chart-wrap { margin-top: 12px; }
+  .chart-wrap img {
+    max-width: 100%; height: auto;
+    border: 1px solid var(--line); border-radius: 4px;
+    display: block;
   }
   .twocol { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   @media (max-width: 760px) { .twocol { grid-template-columns: 1fr; } }
   footer { text-align: center; font-size: 12px; color: var(--muted); margin-top: 20px; }
+  details { margin-top: 8px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; }
 </style>
 </head>
 <body>
+
+{# Macros — defined up-top so they're in scope for every section. #}
+{% macro chart(name) %}
+<div class="chart-wrap">
+  {% set b64 = pkg.charts.get(name) %}
+  {% if b64 %}
+    <img src="data:image/png;base64,{{ b64 }}" alt="{{ name }}" />
+  {% else %}
+    <div class="placeholder">[chart unavailable: {{ name }}]</div>
+  {% endif %}
+</div>
+<div class="commentary">
+  <div class="commentary-label">Commentary &middot; {{ name }}</div>
+  {% set slot = pkg.commentary.get(name) %}
+  <div class="commentary-body">
+    {% if slot %}
+      <strong>{{ slot.headline }}</strong>
+      {{ mover_chips(slot) }}
+      <p>{{ slot.body }}</p>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+{# Materiality chips — rendered between headline and body so the reader
+   sees the LLM's focus/noise call before reading the prose. #}
+{% macro mover_chips(slot) %}
+  {% if slot.material_movers %}
+  <div class="mover-tags">
+    <span class="tag-label">Focus</span>
+    {% for m in slot.material_movers %}<span class="tag tag-material">{{ m }}</span>{% endfor %}
+  </div>
+  {% endif %}
+  {% if slot.noise_flags %}
+  <div class="mover-tags">
+    <span class="tag-label">Noise</span>
+    {% for m in slot.noise_flags %}<span class="tag tag-noise">{{ m }}</span>{% endfor %}
+  </div>
+  {% endif %}
+{% endmacro %}
+
+{# Section-level summary block — renders right after the <h2>. Empty when
+   the LLM didn't populate the slot (Stage 1 or LLM disabled). #}
+{% macro section_summary(slot_id) %}
+  {% set slot = pkg.commentary.get(slot_id) %}
+  {% if slot %}
+    <div class="section-summary">
+      <strong>{{ slot.headline }}</strong>
+      {{ mover_chips(slot) }}
+      <p>{{ slot.body }}</p>
+    </div>
+  {% endif %}
+{% endmacro %}
+
 <div class="container">
 
-  {# ------------------------------------------------------------ HEADER #}
+{# ============================== Header ============================== #}
   <header>
     <h1>{{ pkg.config_snapshot.report_title or "Rate Response Dashboard" }}</h1>
     <div class="subtitle">
-      Monthly report — latest month
-      <strong>{{ pkg.facts.latest_month or "n/a" }}</strong>
+      Monthly report — latest month <strong>{{ pkg.facts.latest_month or "n/a" }}</strong>
       &middot; generated {{ pkg.facts.generated_at }}
     </div>
     <span class="watermark">AI-generated draft &middot; analyst review required</span>
   </header>
 
-  {# ------------------------------------------------------------ MATURITY #}
+{# ============================== Data quality ============================== #}
   {% set latest_mat = pkg.facts.maturity.get(pkg.facts.latest_month) %}
   <section>
     <h2>Data quality &amp; maturity</h2>
     <p>
-      Latest month
-      <strong>{{ pkg.facts.latest_month }}</strong>
-      maturity:
+      Latest month <strong>{{ pkg.facts.latest_month }}</strong> maturity:
       {% if latest_mat %}
         <span class="chip {{ latest_mat.status | maturity_class }}">{{ latest_mat.status }}</span>
         &middot; XPM data:
@@ -176,13 +237,13 @@
     {% endif %}
   </section>
 
-  {# ------------------------------------------------------------ LATEST KPIs #}
-  {% set overall_latest = none %}
-  {% for r in pkg.facts.overall_trend %}
-    {% if r.campaign_month == pkg.facts.latest_month %}{% set overall_latest = r %}{% endif %}
-  {% endfor %}
+{# ============================== A. Headline KPIs + overall combo ============================== #}
+  {% set overall_latest = pkg.facts.overall_trend
+       | selectattr('campaign_month', 'equalto', pkg.facts.latest_month)
+       | list | first %}
   <section>
-    <h2>Latest month KPIs (overall)</h2>
+    <h2>A. Headline KPIs &amp; overall trend</h2>
+    {{ section_summary('section_a_summary') }}
     {% if overall_latest %}
     <div class="kpi-grid">
       <div class="kpi"><div class="k-label">Mail volume</div>
@@ -195,20 +256,21 @@
         <div class="k-value">{{ overall_latest.nrr | pct }}</div></div>
       <div class="kpi"><div class="k-label">Board rate</div>
         <div class="k-value">{{ overall_latest.board_rate | pct }}</div></div>
-      <div class="kpi"><div class="k-label">Actual / Expected (TRM)</div>
+      <div class="kpi"><div class="k-label">A/E (TRM)</div>
         <div class="k-value">{{ overall_latest.ae_trm | ratio }}</div></div>
-      <div class="kpi"><div class="k-label">Actual / Expected (XPM)</div>
-        <div class="k-value">{{ overall_latest.ae_xpm | ratio }}</div></div>
+      <div class="kpi"><div class="k-label">A/E (XPM)</div>
+        <div class="k-value">
+          {% if latest_mat and not latest_mat.has_xpm %}<span class="na">—</span>
+          {% else %}{{ overall_latest.ae_xpm | ratio }}{% endif %}
+        </div></div>
     </div>
     {% else %}
     <p class="na">No data for latest month.</p>
     {% endif %}
-  </section>
 
-  {# ------------------------------------------------------------ OVERALL MoM / YoY #}
-  <section>
-    <h2>Overall MoM &amp; YoY</h2>
-    {% macro mov_row(movs, label) %}
+    {{ chart('overall_combo') }}
+
+    {% macro mov_table(movs, label) %}
       <h3>{{ label }}</h3>
       {% if movs %}
       <table>
@@ -219,18 +281,9 @@
         {% for m in movs %}
         <tr>
           <td>{{ m.metric }}</td>
-          <td>
-            {% if m.metric in ['nrr', 'board_rate'] %}{{ m.current_value | pct }}
-            {% else %}{{ m.current_value | intk }}{% endif %}
-          </td>
-          <td>
-            {% if m.metric in ['nrr', 'board_rate'] %}{{ m.prior_value | pct }}
-            {% else %}{{ m.prior_value | intk }}{% endif %}
-          </td>
-          <td>
-            {% if m.metric in ['nrr', 'board_rate'] %}{{ m.delta_bps | bps }}
-            {% else %}{{ m.delta_pct | pct_change }}{% endif %}
-          </td>
+          <td>{% if m.metric in ['nrr', 'board_rate'] %}{{ m.current_value | pct }}{% else %}{{ m.current_value | intk }}{% endif %}</td>
+          <td>{% if m.metric in ['nrr', 'board_rate'] %}{{ m.prior_value | pct }}{% else %}{{ m.prior_value | intk }}{% endif %}</td>
+          <td>{% if m.metric in ['nrr', 'board_rate'] %}{{ m.delta_bps | bps }}{% else %}{{ m.delta_pct | pct_change }}{% endif %}</td>
           <td><span class="chip {{ m.direction | direction_class }}">{{ m.direction }}</span></td>
         </tr>
         {% endfor %}
@@ -240,70 +293,211 @@
       <p class="na">No prior-month or YoY anchor available.</p>
       {% endif %}
     {% endmacro %}
-
     <div class="twocol">
-      <div>{{ mov_row(pkg.mom_yoy.overall_mom, "Month over Month") }}</div>
-      <div>{{ mov_row(pkg.mom_yoy.overall_yoy, "Year over Year") }}</div>
+      <div>{{ mov_table(pkg.mom_yoy.overall_mom, "Month over Month") }}</div>
+      <div>{{ mov_table(pkg.mom_yoy.overall_yoy, "Year over Year") }}</div>
     </div>
   </section>
 
-  {# ------------------------------------------------------------ PRODUCT #}
+{# ============================== B. Slice analyses by dimension ============================== #}
   <section>
-    <h2>By product (annual_fee)</h2>
-    {% set rate_movs = pkg.mom_yoy.product_mom | selectattr('metric', 'equalto', 'nrr') | list %}
-    {% if rate_movs %}
+    <h2>B. Slice analyses — mix &amp; overall NRR by dimension</h2>
+    {{ section_summary('section_b_summary') }}
+    <p style="color: var(--muted); font-size: 12.5px;">
+      Stacked bars = volume by each value of the dimension (showing population
+      mix). Red line = overall NRR (same on every chart). Pattern matches the
+      Pivot tab combo so analyst muscle memory carries over.
+    </p>
+
+    {% if pkg.mix.top_shifts %}
+    <h3>Top {{ pkg.mix.top_shifts | length }} biggest share shifts (MoM, all dims)</h3>
     <table>
       <thead><tr>
-        <th>Product</th><th>NRR (latest)</th><th>NRR (prior)</th>
-        <th>MoM Δ</th><th>Direction</th>
+        <th>Dim</th><th>Value</th><th>Latest share</th><th>Prior share</th>
+        <th>Δ (pp)</th><th>Direction</th>
       </tr></thead>
       <tbody>
-      {% for m in rate_movs %}
+      {% for s in pkg.mix.top_shifts %}
       <tr>
-        <td>{{ m.dim_value | dash_if_none }}</td>
-        <td>{{ m.current_value | pct }}</td>
-        <td>{{ m.prior_value | pct }}</td>
-        <td>{{ m.delta_bps | bps }}</td>
-        <td><span class="chip {{ m.direction | direction_class }}">{{ m.direction }}</span></td>
+        <td>{{ s.dim }}</td>
+        <td>{{ s.dim_value | dash_if_none }}</td>
+        <td>{{ s.current_share | pct(1) }}</td>
+        <td>{{ s.prior_share | pct(1) }}</td>
+        <td>{{ "%+.2f" | format(s.delta_share_pp) if s.delta_share_pp is not none else "—" }}</td>
+        <td><span class="chip {{ s.direction | direction_class }}">{{ s.direction }}</span></td>
       </tr>
       {% endfor %}
       </tbody>
     </table>
+    {% endif %}
+
+    {% for dim in pkg.slice_trends.by_dim.keys() %}
+      <h3>By {{ dim }}</h3>
+      {{ chart("slice_" ~ dim) }}
+    {% endfor %}
+  </section>
+
+{# ============================== C. Big Mac drill-down ============================== #}
+  <section>
+    <h2>C. Big Mac cohort drill-down</h2>
+    {{ section_summary('section_c_summary') }}
+    {% if pkg.big_mac.cohort_empty %}
+      <p class="na">Big Mac cohort had no rows after applying the configured filter.
+      Check <code>ai_agent.big_mac</code> in config.yaml.</p>
     {% else %}
-    <p class="na">No product-level MoM available.</p>
+      <p style="color: var(--muted); font-size: 12.5px;">
+        Filter: {{ pkg.big_mac.filter_summary | tojson }} —
+        the cleanest "untouched baseline" cohort for true response-rate change.
+      </p>
+
+      <h3>Cohort mix &amp; NRR</h3>
+      {{ chart('big_mac_overall') }}
+
+      <h3>Per-{{ pkg.big_mac.drill_dim }} NRR — which slice moved most</h3>
+      {{ chart('big_mac_drill') }}
+
+      <div class="twocol">
+        <div>
+          <h3>Biggest drop (MoM)</h3>
+          {% if pkg.big_mac.biggest_drop %}
+            {% set d = pkg.big_mac.biggest_drop %}
+            <p><strong>{{ d.dim_value }}</strong>:
+              NRR {{ d.prior_value | pct }} → {{ d.current_value | pct }}
+              <span class="chip dir-down">{{ d.delta_bps | bps }}</span></p>
+          {% else %}<p class="na">No qualifying drop.</p>{% endif %}
+        </div>
+        <div>
+          <h3>Biggest gain (MoM)</h3>
+          {% if pkg.big_mac.biggest_gain %}
+            {% set g = pkg.big_mac.biggest_gain %}
+            <p><strong>{{ g.dim_value }}</strong>:
+              NRR {{ g.prior_value | pct }} → {{ g.current_value | pct }}
+              <span class="chip dir-up">{{ g.delta_bps | bps }}</span></p>
+          {% else %}<p class="na">No qualifying gain.</p>{% endif %}
+        </div>
+      </div>
     {% endif %}
   </section>
 
-  {# ------------------------------------------------------------ BIGGEST MOVERS #}
+{# ============================== D. Top combination movers ============================== #}
   <section>
-    <h2>Biggest segment NRR movers (MoM)</h2>
-    {% if pkg.mom_yoy.biggest_movers %}
-    <table>
-      <thead><tr>
-        <th>Dim</th><th>Value</th><th>NRR (latest)</th>
-        <th>NRR (prior)</th><th>Δ</th><th>Direction</th>
-      </tr></thead>
-      <tbody>
-      {% for m in pkg.mom_yoy.biggest_movers %}
-      <tr>
-        <td>{{ m.dim }}</td>
-        <td>{{ m.dim_value | dash_if_none }}</td>
-        <td>{{ m.current_value | pct }}</td>
-        <td>{{ m.prior_value | pct }}</td>
-        <td>{{ m.delta_bps | bps }}</td>
-        <td><span class="chip {{ m.direction | direction_class }}">{{ m.direction }}</span></td>
-      </tr>
-      {% endfor %}
-      </tbody>
-    </table>
+    <h2>D. Top combination movers</h2>
+    {{ section_summary('section_d_summary') }}
+    {% if pkg.combinations.prior_month is none %}
+      <div class="placeholder">
+        Combination analysis needs at least two months of data.
+      </div>
     {% else %}
-    <p class="na">No segment movers (no prior month or all suppressed by small-cell rule).</p>
+      <p style="color: var(--muted); font-size: 12.5px;">
+        2-way combinations (dim_A × dim_B) ranked by absolute MoM NRR change.
+        Cells with volume &lt; {{ pkg.combinations.min_volume }} in either month
+        are dropped to filter noise. Pairs evaluated:
+        {{ pkg.combinations.pairs_evaluated | join("; ") }}.
+      </p>
+
+      {{ chart('top_combo_movers') }}
+
+      <div class="twocol">
+        <div>
+          <h3>Top gainers (NRR up)</h3>
+          {% if pkg.combinations.top_gainers %}
+          <table>
+            <thead><tr><th>Combination</th><th>Vol</th><th>NRR prv</th>
+                       <th>NRR cur</th><th>Δ</th></tr></thead>
+            <tbody>
+            {% for m in pkg.combinations.top_gainers %}
+            <tr>
+              <td>{% for k, v in m.dim_values.items() %}{{ k }}={{ v }}{% if not loop.last %} &times; {% endif %}{% endfor %}</td>
+              <td>{{ m.current_volume | intk }}</td>
+              <td>{{ m.prior_nrr | pct }}</td>
+              <td>{{ m.current_nrr | pct }}</td>
+              <td><span class="chip dir-up">{{ m.delta_bps | bps }}</span></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% else %}<p class="na">No qualifying gainers.</p>{% endif %}
+        </div>
+        <div>
+          <h3>Top losers (NRR down)</h3>
+          {% if pkg.combinations.top_losers %}
+          <table>
+            <thead><tr><th>Combination</th><th>Vol</th><th>NRR prv</th>
+                       <th>NRR cur</th><th>Δ</th></tr></thead>
+            <tbody>
+            {% for m in pkg.combinations.top_losers %}
+            <tr>
+              <td>{% for k, v in m.dim_values.items() %}{{ k }}={{ v }}{% if not loop.last %} &times; {% endif %}{% endfor %}</td>
+              <td>{{ m.current_volume | intk }}</td>
+              <td>{{ m.prior_nrr | pct }}</td>
+              <td>{{ m.current_nrr | pct }}</td>
+              <td><span class="chip dir-down">{{ m.delta_bps | bps }}</span></td>
+            </tr>
+            {% endfor %}
+            </tbody>
+          </table>
+          {% else %}<p class="na">No qualifying losers.</p>{% endif %}
+        </div>
+      </div>
     {% endif %}
   </section>
 
-  {# ------------------------------------------------------------ MODEL #}
+{# ============================== E. Model catch ============================== #}
   <section>
-    <h2>Model performance &amp; strategic choice</h2>
+    <h2>E. Can the model catch the change?</h2>
+    {{ section_summary('section_e_summary') }}
+    <p style="color: var(--muted); font-size: 12.5px;">
+      For each top NRR mover above, did the expected_rr move with it? A model
+      missing material movement is a calibration drift signal.
+    </p>
+    {% if pkg.model_catch.rows %}
+      {% set ts = pkg.model_catch.trm_summary %}
+      {% set xs = pkg.model_catch.xpm_summary %}
+      <p>
+        TRM verdicts:
+        <span class="chip v-match">match {{ ts.get('match', 0) }}</span>
+        <span class="chip v-partial">partial {{ ts.get('partial', 0) }}</span>
+        <span class="chip v-miss">miss {{ ts.get('miss', 0) }}</span>
+        <span class="chip v-na">n/a {{ ts.get('n/a', 0) }}</span>
+        &nbsp;&middot;&nbsp;
+        XPM verdicts:
+        <span class="chip v-match">match {{ xs.get('match', 0) }}</span>
+        <span class="chip v-partial">partial {{ xs.get('partial', 0) }}</span>
+        <span class="chip v-miss">miss {{ xs.get('miss', 0) }}</span>
+        <span class="chip v-na">n/a {{ xs.get('n/a', 0) }}</span>
+      </p>
+      <table>
+        <thead><tr>
+          <th>Dim</th><th>Value</th>
+          <th>Actual Δ</th>
+          <th>TRM expected Δ</th><th>TRM</th>
+          <th>XPM expected Δ</th><th>XPM</th>
+        </tr></thead>
+        <tbody>
+        {% for r in pkg.model_catch.rows %}
+        <tr>
+          <td>{{ r.dim }}</td>
+          <td>{{ r.dim_value | dash_if_none }}</td>
+          <td>{{ r.actual_delta_bps | bps }}</td>
+          <td>{{ r.trm_expected_delta_bps | bps if r.trm_expected_delta_bps is not none else '—' }}</td>
+          <td><span class="chip v-{{ r.trm_verdict | replace('/', '-') }}">{{ r.trm_verdict }}</span></td>
+          <td>{{ r.xpm_expected_delta_bps | bps if r.xpm_expected_delta_bps is not none else '—' }}</td>
+          <td><span class="chip v-{{ r.xpm_verdict | replace('/', '-') }}">{{ r.xpm_verdict }}</span></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="na">No qualifying movers to score.</p>
+    {% endif %}
+  </section>
+
+{# ============================== F. TRM vs XPM ============================== #}
+  <section>
+    <h2>F. TRM vs XPM — model choice</h2>
+    {{ section_summary('section_f_summary') }}
+    <h3>A/E calibration trend</h3>
+    {{ chart('calibration') }}
 
     <h3>Headline rank-order ({{ pkg.model.latest_month }})</h3>
     <table>
@@ -330,57 +524,23 @@
       </tbody>
     </table>
 
-    <h3>Calibration trend — A/E ratio by month</h3>
-    {# Wide-form table: rows = month, columns = TRM A/E, XPM A/E #}
-    {% set cal_by_month = {} %}
-    {% for c in pkg.model.calibration_trend %}
-      {% if c.campaign_month not in cal_by_month %}{% set _ = cal_by_month.update({c.campaign_month: {}}) %}{% endif %}
-      {% set _ = cal_by_month[c.campaign_month].update({c.model: c}) %}
-    {% endfor %}
-    <table>
-      <thead><tr>
-        <th>Month</th><th>TRM A/E</th><th>XPM A/E</th><th>Maturity</th>
-      </tr></thead>
-      <tbody>
-      {% for cm in pkg.facts.months_in_scope %}
-        {% set pair = cal_by_month.get(cm, {}) %}
-        {% set trm = pair.get('TRM') %}
-        {% set xpm = pair.get('XPM') %}
-        {% set mat = pkg.facts.maturity.get(cm) %}
-        <tr>
-          <td>{{ cm }}</td>
-          <td>
-            {% if trm and trm.available %}{{ trm.ae_ratio | ratio }}
-            {% else %}<span class="na">—</span>{% endif %}
-          </td>
-          <td>
-            {% if xpm and xpm.available %}{{ xpm.ae_ratio | ratio }}
-            {% else %}<span class="na">—</span>{% endif %}
-          </td>
-          <td>
-            {% if mat %}<span class="chip {{ mat.status | maturity_class }}">{{ mat.status }}</span>
-            {% else %}<span class="na">unknown</span>{% endif %}
-          </td>
-        </tr>
-      {% endfor %}
-      </tbody>
-    </table>
     {% if pkg.model.swap_estimate is none %}
     <div class="note">
       Strategic swap estimate (replace TRM10 with XPM07 under same volume/board target)
-      is reserved for a future iteration once SAS emits an XPM-binned decile mart.
+      reserved for a future iteration — needs an XPM-binned decile mart.
     </div>
     {% endif %}
   </section>
 
-  {# ------------------------------------------------------------ APPENDIX #}
+{# ============================== Appendix ============================== #}
   <section>
-    <h2>Appendix &middot; months in scope</h2>
-    <p>{{ pkg.facts.months_in_scope | length }} months: {{ pkg.facts.months_in_scope | join(", ") }}</p>
-    <p style="color: var(--muted); font-size: 12px;">
-      Small-cell threshold: {{ pkg.config_snapshot.small_cell_threshold }} &middot;
-      Maturity threshold: {{ pkg.config_snapshot.maturity_threshold_months }} months.
-    </p>
+    <h2>Appendix</h2>
+    <p><strong>{{ pkg.facts.months_in_scope | length }} months in scope:</strong>
+       {{ pkg.facts.months_in_scope | join(", ") }}</p>
+    <details>
+      <summary>Config snapshot</summary>
+      <pre style="font-size:11.5px;color:var(--muted);overflow:auto">{{ pkg.config_snapshot | tojson(indent=2) }}</pre>
+    </details>
   </section>
 
   <footer>

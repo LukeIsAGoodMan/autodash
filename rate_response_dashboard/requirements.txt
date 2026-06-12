@@ -7,6 +7,9 @@ dash-bootstrap-components>=1.5
 plotly>=5.20
 openpyxl>=3.1
 jinja2>=3.1
+kaleido>=0.2
+openai>=1.50
+pydantic>=2.5
 pytest>=7.4
 # C1BConnections / Agora is the company-internal SAS connector and
 # is NOT installed via pip. It's expected to be importable from:

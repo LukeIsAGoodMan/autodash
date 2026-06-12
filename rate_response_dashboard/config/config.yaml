@@ -133,3 +133,62 @@ catalog:
 logging:
   level: "INFO"
   file: "./data/logs/app.log"
+
+# AI Report Generator. See src/ai_agent/.
+ai_agent:
+  # Stage 2 LLM commentary. Provider is swapped per environment:
+  #   • Mac dev: provider=openai, OPENAI_API_KEY env
+  #   • Company: provider=gemini once Enterprise access is provisioned
+  #   • CI / offline: provider=stub (no network, no spend)
+  llm:
+    provider: stub             # stub | openai | gemini
+    model: gpt-4o
+    api_key_env: OPENAI_API_KEY
+    timeout_seconds: 30
+    # When true, commentary is generated and embedded in the report.
+    # When false, the LLM step is skipped entirely and chart placeholders
+    # show the "Commentary will appear here in Stage 2" stub.
+    enabled: true
+
+
+  # How many of the most recent months to render charts for. The full mart
+  # is still scanned (for biggest movers etc.), but charts truncate to
+  # avoid unreadably crowded x-axes.
+  chart_lookback_months: 15
+
+  # Big Mac cohort definition. The "Big Mac" is the most-targeted prospecting
+  # subset of the mail file and is the natural baseline for measuring true
+  # rate response change without expansion / remail confounds.
+  # All conditions are AND-ed together. Adjust here when the cohort definition
+  # changes — the report module reads this at runtime.
+  big_mac:
+    Prospect_type: "Prospecting"
+    rm_flag: 0
+    times_mailed_12mo_cnt: 0
+    trm10_tier_in: [1, 21]
+    # The single dim Big Mac drills into for "which slice moved most".
+    drill_dim: "vs_band"
+
+  # Dims surfaced in slice-trend section. Order = render order.
+  slice_dims:
+    - annual_fee
+    - vs_band
+    - scorecard
+    - Prospect_type
+    - rm_flag
+    - times_mailed_12mo_cnt
+
+  # Section D — top combination movers. Each pair listed is enumerated as a
+  # 2-way drill (dim_A × dim_B), MoM NRR computed per cell, and the largest
+  # absolute movers are surfaced. Cells with volume below `min_combo_volume`
+  # in either month are dropped (noise floor).
+  combinations:
+    dim_pairs:
+      - [annual_fee, vs_band]
+      - [annual_fee, Prospect_type]
+      - [annual_fee, times_mailed_12mo_cnt]
+      - [vs_band, Prospect_type]
+      - [vs_band, times_mailed_12mo_cnt]
+      - [Prospect_type, times_mailed_12mo_cnt]
+    min_combo_volume: 5000        # higher than small_cell — combos are smaller
+    top_k: 8                      # surface top 8 gainers + top 8 losers
