@@ -115,7 +115,7 @@ user at a time.
 | **Rank Order** (P4) | KS / AUC / Gini / Top decile lift + 4 business KPIs; cumulative capture curve with 45° reference; response rate by decile bar; KS-over-time trend; decile detail table with **per-decile KS** + **Misrank** ⚠ flag. Scorecard filter routes: All → portfolio mart (20 deciles); 1–4 → scorecard mart (10 deciles per scorecard) |
 | **Data Quality** | Per-partition table: row count, sums, `has_xpm`, `sas_run_date`, **`maturity_status`** |
 | **Export** | CSV / Excel download of the currently filtered + aggregated mart |
-| **AI Report** | One-click monthly narrative report (HTML). Six analytical sections (Headline KPIs → Population mix → Big Mac cohort → Top combinations → Model catch → TRM vs XPM). Optional LLM commentary with `material_movers` (green Focus chips) + `noise_flags` (gray Noise chips). Loading overlay while generating; per-slot fallback explains why if the LLM step fails. |
+| **AI Report** | One-click monthly narrative report (HTML). **Month picker** lets the analyst back-date the report to any month in the mart (defaults to latest); a colored chip beside the dropdown flags `partial` / `unknown` maturity *before* the LLM spend. Six analytical sections (Headline KPIs → Population mix → Big Mac cohort → Top combinations → Model catch → TRM vs XPM). Optional LLM commentary with `material_movers` (green Focus chips) + `noise_flags` (gray Noise chips). Loading overlay while generating; per-slot fallback explains why if the LLM step fails. |
 
 ### Filters (consistent across Pivot / Model / Export)
 
@@ -158,6 +158,29 @@ read_decile┘                                                 │
                        reports/<timestamp>/report.html  +  iframe preview
 ```
 
+### Picking the report month
+
+The dropdown next to the Generate button is populated from
+`validation_summary.csv` whenever the AI Report tab is activated, newest
+month first. Each option carries its maturity in parentheses
+(`2026-06 (partial)`), and a colored chip beside the dropdown spells out
+the consequence:
+
+| Chip | Meaning |
+|---|---|
+| `[full · XPM on/off]` (green) | Safe to publish; XPM availability shown for the picked month |
+| `[partial — NRR still maturing, treat report as preliminary]` (red) | Boards/responders for this month are still arriving from the offer drop; commentary will prepend `Preliminary:` automatically |
+| `[unknown — no validation_summary entry]` (amber) | The pipeline could not determine maturity — usually means SAS rerun date is missing |
+
+`build_report_package(cfg, target_month="2026-05")` truncates the rollup
+mart, decile mart, and maturity dict to `<= target_month` before any
+analysis runs, so MoM/YoY anchors, lookback windows, and trend charts
+all treat the picked month as the latest. When `target_month` is
+omitted (CLI, headless), behavior is unchanged: the latest month in the
+mart is used.
+
+### Commentary slots
+
 Each commentary slot the LLM populates carries:
 
 - `headline` — one declarative sentence
@@ -180,6 +203,7 @@ ai_agent:
     api_key_env: OPENAI_API_KEY
     timeout_seconds: 30
     enabled: false          # flip to true when ready; defaults off
+    audit_enabled: true     # Sprint B audit pass; set false to save spend
   chart_lookback_months: 15
   slice_dims: [annual_fee, vs_band, scorecard, Prospect_type, rm_flag, times_mailed_12mo_cnt]
   big_mac:
@@ -420,18 +444,22 @@ pytest tests/
     values, empty per-dim slices, XPM gaps on different months)
   - Confirm the loading overlay + fallback path behave correctly when
     Gemini Enterprise is or is not reachable
-- ⬜ **Sprint B — Cross-section synthesis + audit pass**
-  - Reorder section dispatch so the per-dim Section B builders run first
-    and the B-summary builder runs last with access to their outputs;
-    extend builder signature to accept `prior_slots: dict`. Lets B-summary
-    write "out of these 6 dims, $95/$95 is the dominant mover; rm_flag is
-    noise" instead of just listing them
-  - Add a second-pass audit step: same Gemini Enterprise endpoint, fresh
-    system prompt that frames the model as an *independent quality
-    reviewer*. Reviewer reads the Stage-2 commentary + the underlying
-    facts and flags: unit bugs (bps vs pp confusion), missing XPM caveats,
-    numbers not in the source facts, cross-section contradictions. Output
-    becomes a banner at the top of each section
+- ✅ **Sprint B — Cross-section synthesis + audit pass**
+  - **Dispatch reorder**: builder signature extended with optional
+    `prior_slots: dict`; section_b_summary now runs AFTER every per-dim
+    `B-{dim}` builder and reads each dim's headline + materiality call to
+    synthesize across dims ("annual_fee dominates; rm_flag dim is noise")
+    instead of re-deriving the ranking from raw mix shifts.
+  - **Audit pass** (`src/ai_agent/llm/auditor.py`): same LLM endpoint,
+    fresh `_AUDIT_SYSTEM` prompt that frames the model as an INDEPENDENT
+    QA reviewer. One audit call per section. Checks: unit bugs (bps vs
+    pp), hallucinated numbers (not in facts), missing caveats (partial
+    maturity, XPM unavailable), causal language without PAF backing,
+    internal contradictions, missing prioritization on ranking slots.
+  - Findings keyed by section letter (A–F) and rendered as colored
+    banners under the section H2 (red = error, amber = warning, blue =
+    info). Audit failure itself becomes an info banner so the report
+    never breaks. Disable via `ai_agent.llm.audit_enabled: false`.
 - ⬜ **Stage 3 — PAF integration** *(2–3 weeks)*
   - LLM-based PDF extraction agent reads the analyst-maintained PAF
     documents and emits structured `PAFEvent` records (event type, affected

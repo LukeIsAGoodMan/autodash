@@ -81,7 +81,7 @@ def populate_all_fallback(
     all_slots: dict[str, CommentarySlot] = {}
     for section_id, builder in get_section_builders(pkg):
         try:
-            _, _, expected_ids = builder(pkg)
+            _, _, expected_ids = builder(pkg, all_slots)
         except Exception as e:                          # builder itself broke
             log.exception("Section %s builder error during fallback: %s",
                           section_id, e)
@@ -101,7 +101,10 @@ def write_commentary(
     all_slots: dict[str, CommentarySlot] = {}
     for section_id, builder in get_section_builders(pkg):
         try:
-            system, user, expected_ids = builder(pkg)
+            # Pass slots accumulated so far — lets B-summary (which runs AFTER
+            # per-dim B-{dim} calls) synthesize across the per-dim findings
+            # instead of re-deriving the ranking from raw mix shifts.
+            system, user, expected_ids = builder(pkg, all_slots)
         except Exception as e:
             log.exception("Section %s builder error: %s", section_id, e)
             # Builder broke before we even know the slot ids — skip; nothing

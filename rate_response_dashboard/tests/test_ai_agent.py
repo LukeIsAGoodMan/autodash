@@ -499,6 +499,290 @@ def test_write_commentary_partial_response_fills_missing_slots():
     assert "omitted this slot" in commentary["overall_combo"].body
 
 
+def test_orchestrator_target_month_clamps_latest_and_maturity(monkeypatch, tmp_path):
+    """When the caller pins target_month, ReportFacts.latest_month must
+    equal that month — even if newer data exists in the mart — and the
+    maturity dict must not contain months past the cutoff."""
+    cfg = _cfg()
+    cfg["paths"] = {"mart_dir": str(tmp_path),
+                    "decile_port_mart_dir": str(tmp_path),
+                    "decile_sc_mart_dir": str(tmp_path)}
+    cfg["ai_agent"]["llm"] = {"enabled": False, "provider": "stub"}
+
+    from src.ai_agent import orchestrator
+    monkeypatch.setattr(orchestrator, "read_mart", lambda _p: _rollup_df())
+    monkeypatch.setattr(orchestrator, "read_decile_port_mart",
+                        lambda _p: _decile_port_df())
+    monkeypatch.setattr(orchestrator, "read_decile_sc_mart", lambda _p: None)
+    monkeypatch.setattr(orchestrator.snapshot_builder, "load_maturity",
+                        lambda _c: _maturity_full())
+
+    # _rollup_df has 2025-06, 2026-05, 2026-06. Pin latest to 2026-05.
+    pkg = orchestrator.build_report_package(cfg, target_month="2026-05")
+    assert pkg.facts.latest_month == "2026-05"
+    assert "2026-06" not in pkg.facts.months_in_scope
+    assert "2026-06" not in pkg.facts.maturity
+    # 2026-05 maturity (full per the fixture) must propagate.
+    assert pkg.facts.maturity["2026-05"].status == "full"
+
+
+def test_orchestrator_target_month_none_falls_back_to_latest(monkeypatch, tmp_path):
+    """target_month=None must preserve the original 'pick max(months)'
+    behavior so existing callers (CLI scripts, default Generate button
+    before month-picker) continue to work."""
+    cfg = _cfg()
+    cfg["paths"] = {"mart_dir": str(tmp_path),
+                    "decile_port_mart_dir": str(tmp_path),
+                    "decile_sc_mart_dir": str(tmp_path)}
+    cfg["ai_agent"]["llm"] = {"enabled": False, "provider": "stub"}
+    from src.ai_agent import orchestrator
+    monkeypatch.setattr(orchestrator, "read_mart", lambda _p: _rollup_df())
+    monkeypatch.setattr(orchestrator, "read_decile_port_mart",
+                        lambda _p: _decile_port_df())
+    monkeypatch.setattr(orchestrator, "read_decile_sc_mart", lambda _p: None)
+    monkeypatch.setattr(orchestrator.snapshot_builder, "load_maturity",
+                        lambda _c: _maturity_full())
+
+    pkg = orchestrator.build_report_package(cfg)
+    assert pkg.facts.latest_month == "2026-06"  # max of the fixture
+
+
+def test_dashboard_layout_exposes_month_picker():
+    """The AI Report tab layout must include the month dropdown + maturity
+    chip span so the new callbacks have outputs to bind to."""
+    from dashboard.tab_ai_report import tab_ai_report
+    from dash import dcc
+    tab = tab_ai_report()
+    found = {"dropdown": False, "maturity_span": False, "loading": False}
+
+    def walk(el):
+        if isinstance(el, dcc.Dropdown) and getattr(el, "id", None) == "ai-month-select":
+            found["dropdown"] = True
+        if getattr(el, "id", None) == "ai-month-maturity":
+            found["maturity_span"] = True
+        if isinstance(el, dcc.Loading):
+            found["loading"] = True
+        children = getattr(el, "children", None)
+        if children is None:
+            return
+        items = children if isinstance(children, list) else [children]
+        for c in items:
+            walk(c)
+
+    walk(tab)
+    assert found["dropdown"], "month dropdown missing from AI Report layout"
+    assert found["maturity_span"], "maturity chip span missing from layout"
+    assert found["loading"], "dcc.Loading wrapper still present"
+
+
+def test_maturity_chip_renders_partial_warning():
+    """Selecting a partial month must produce a red-styled chip with
+    explicit 'still maturing' wording so the user can't miss the warning."""
+    from dashboard.callbacks_ai import _maturity_chip
+    chip = _maturity_chip("partial", False)
+    # Walk the html.Span to find its text
+    text = chip.children if isinstance(chip.children, str) else ""
+    assert "partial" in text and "still maturing" in text
+    assert chip.style.get("color") == "#9e2a2a", "partial chip must be red-toned"
+
+
+def test_maturity_chip_renders_full_status():
+    """Full-maturity month gets a green chip; XPM availability shown inline."""
+    from dashboard.callbacks_ai import _maturity_chip
+    chip = _maturity_chip("full", True)
+    text = chip.children if isinstance(chip.children, str) else ""
+    assert "full" in text and "XPM on" in text
+    assert chip.style.get("color") == "#137333"
+
+
+def test_dispatch_order_b_summary_runs_last_in_b_group():
+    """Sprint B: per-dim builders must run BEFORE B-summary so the summary
+    call can see their outputs via prior_slots."""
+    from src.ai_agent.llm.prompts import get_section_builders
+    pkg = _pkg_for_llm_tests()
+    ids = [sid for sid, _ in get_section_builders(pkg)]
+    # B-summary must appear after EVERY B-{dim}.
+    b_dims = [s for s in ids if s.startswith("B-") and s != "B-summary"]
+    assert ids.index("B-summary") > max(ids.index(s) for s in b_dims), \
+        f"B-summary did not move past per-dim builders: order={ids}"
+    # A must still be first; F must still be last.
+    assert ids[0] == "A" and ids[-1] == "F"
+
+
+def test_section_b_summary_payload_includes_per_dim_findings():
+    """B-summary builder must read prior_slots and expose per_dim_findings
+    in its prompt payload — that's the entire point of the reorder."""
+    from src.ai_agent.llm.prompts import section_b_summary
+    from src.ai_agent.llm.schemas import CommentarySlot
+    pkg = _pkg_for_llm_tests()
+    # Seed prior_slots with one per-dim finding the writer would have
+    # produced before B-summary's call.
+    prior = {
+        "slice_annual_fee": CommentarySlot(
+            slot_id="slice_annual_fee",
+            headline="$95/$95 is the material annual_fee mover (+4.5 pp).",
+            body="x" * 50,
+            material_movers=["$95/$95 share +4.5 pp"],
+            noise_flags=[],
+        ),
+    }
+    _system, user, slot_ids = section_b_summary(pkg, prior)
+    assert "per_dim_findings" in user
+    assert "annual_fee" in user
+    assert "$95/$95" in user, "per-dim headline did not propagate into prompt"
+    assert slot_ids == ["section_b_summary"]
+
+
+def test_section_b_summary_payload_empty_when_no_prior_slots():
+    """If called WITHOUT prior_slots (e.g. fallback path), B-summary must
+    still build a valid prompt with per_dim_findings empty."""
+    from src.ai_agent.llm.prompts import section_b_summary
+    pkg = _pkg_for_llm_tests()
+    _, user, _ = section_b_summary(pkg, None)
+    assert "per_dim_findings" in user      # field present
+    assert '"per_dim_findings": {}' in user or '"per_dim_findings": {' in user
+
+
+# ----- Audit pass -----
+
+
+def test_auditor_returns_findings_keyed_by_section_letter():
+    """The auditor must collapse per-builder ids ('B-summary', 'B-annual_fee'...)
+    into top-level letter keys so the template can show one banner per
+    visible section."""
+    from src.ai_agent.llm.auditor import audit_commentary, AuditIssue, AuditReport
+    from src.ai_agent.llm.schemas import CommentarySlot
+    pkg = _pkg_for_llm_tests()
+    # Build minimal commentary so the auditor has something to review.
+    commentary = {}
+    from src.ai_agent.llm.prompts import get_section_builders
+    for sid, builder in get_section_builders(pkg):
+        _, _, slot_ids = builder(pkg, commentary)
+        for sid_ in slot_ids:
+            commentary.setdefault(sid_, CommentarySlot(
+                slot_id=sid_, headline="real headline here for review",
+                body="real body content for review " * 4,
+            ))
+
+    class FakeAuditClient:
+        """Returns one 'error' issue for every section so we can verify
+        the keying and pass-through logic."""
+        def generate_structured(self, *, system, user, schema):
+            # Parse out which section by spotting section_id in the original
+            # user prompt (it's there because audit_user includes the full
+            # original prompt as 'ORIGINAL FACTS').
+            import re
+            m = re.search(r'"section_id": "([A-Z\-_a-z]+)"', user)
+            sec = m.group(1) if m else "X"
+            return AuditReport(
+                section_id=sec,
+                issues=[AuditIssue(
+                    severity="error",
+                    issue=f"fake unit bug in {sec}: claims +300 bps for share delta",
+                    affected_slot="section_b_summary",
+                    suggestion="rewrite as +3.0 pp",
+                )],
+            )
+
+    findings = audit_commentary(pkg, commentary, FakeAuditClient())
+    # Keys must be top-level section letters, not sub-builder ids.
+    assert "A" in findings and "C" in findings and "F" in findings
+    assert "B-summary" not in findings, "audit findings must collapse to letters"
+    assert "B" in findings
+    # B should accumulate findings from every B-* sub-builder.
+    assert len(findings["B"]) >= 2, "B must aggregate findings from sub-builders"
+    # Each finding is an AuditIssue with the expected shape.
+    a_issue = findings["A"][0]
+    assert a_issue.severity == "error"
+    assert "+300 bps" in a_issue.issue
+
+
+def test_auditor_skips_fallback_slots():
+    """Don't waste LLM spend auditing slots that are themselves fallback
+    notices — the fallback IS the audit verdict for that slot."""
+    from src.ai_agent.llm.auditor import audit_commentary
+    from src.ai_agent.llm.writer import _fallback_slot
+    pkg = _pkg_for_llm_tests()
+    # Every slot is a fallback.
+    commentary = {}
+    from src.ai_agent.llm.prompts import get_section_builders
+    for sid, builder in get_section_builders(pkg):
+        _, _, slot_ids = builder(pkg, commentary)
+        for sid_ in slot_ids:
+            commentary[sid_] = _fallback_slot(sid_, "api key missing")
+
+    called: list[str] = []
+
+    class TrackingClient:
+        def generate_structured(self, *, system, user, schema):
+            called.append(user[:80])
+            raise AssertionError("auditor should NOT have called the LLM")
+
+    findings = audit_commentary(pkg, commentary, TrackingClient())
+    assert findings == {}, "no findings expected when nothing reviewable"
+    assert called == [], "audit must skip fallback-only sections"
+
+
+def test_auditor_failure_records_info_issue():
+    """When the audit call itself fails, the report still renders — and
+    we surface the audit failure as an info-severity note rather than
+    silently dropping it."""
+    from src.ai_agent.llm.auditor import audit_commentary
+    from src.ai_agent.llm.client import LLMError
+    from src.ai_agent.llm.schemas import CommentarySlot
+    pkg = _pkg_for_llm_tests()
+    commentary = {}
+    from src.ai_agent.llm.prompts import get_section_builders
+    for sid, builder in get_section_builders(pkg):
+        _, _, slot_ids = builder(pkg, commentary)
+        for sid_ in slot_ids:
+            commentary.setdefault(sid_, CommentarySlot(
+                slot_id=sid_, headline="headline placeholder for review",
+                body="body placeholder for review " * 4,
+            ))
+
+    class AlwaysFailClient:
+        def generate_structured(self, *, system, user, schema):
+            raise LLMError("simulated audit-pass network failure")
+
+    findings = audit_commentary(pkg, commentary, AlwaysFailClient())
+    # Every section letter that had reviewable content gets exactly one info
+    # banner per failed sub-builder call — never errors out the report.
+    assert findings, "expected info-severity audit-unavailable notes"
+    for letter, issues in findings.items():
+        for iss in issues:
+            assert iss.severity == "info"
+            assert "could not complete" in iss.issue or "crashed" in iss.issue
+
+
+def test_orchestrator_skips_audit_when_disabled(monkeypatch, tmp_path):
+    """ai_agent.llm.audit_enabled: false must skip the audit step entirely
+    — verified by checking that audit_findings stays empty even when LLM
+    is otherwise enabled and would produce commentary."""
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    cfg = _cfg()
+    cfg["ai_agent"]["llm"] = {
+        "provider": "openai", "model": "gpt-4o",
+        "api_key_env": "OPENAI_API_KEY", "timeout_seconds": 30,
+        "enabled": True, "audit_enabled": False,    # opt-out
+    }
+    cfg["paths"] = {"mart_dir": str(tmp_path),
+                    "decile_port_mart_dir": str(tmp_path),
+                    "decile_sc_mart_dir": str(tmp_path)}
+    from src.ai_agent import orchestrator
+    monkeypatch.setattr(orchestrator, "read_mart", lambda _p: _rollup_df())
+    monkeypatch.setattr(orchestrator, "read_decile_port_mart",
+                        lambda _p: _decile_port_df())
+    monkeypatch.setattr(orchestrator, "read_decile_sc_mart", lambda _p: None)
+    monkeypatch.setattr(orchestrator.snapshot_builder, "load_maturity",
+                        lambda _c: _maturity_full())
+
+    pkg = orchestrator.build_report_package(cfg)
+    # Commentary populated via fallback path (no API key); audit skipped.
+    assert pkg.commentary, "fallback commentary should still be populated"
+    assert pkg.audit_findings == {}, "audit must be skipped when disabled"
+
+
 def test_orchestrator_with_missing_api_key_does_not_raise(monkeypatch, tmp_path):
     """When ai_agent.llm.enabled=true but the API key env var is unset and
     provider=openai, the orchestrator must NOT raise — it must populate

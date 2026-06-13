@@ -17,7 +17,25 @@ from dash import dcc, html
 
 
 def tab_ai_report() -> dbc.Tab:
+    # Month picker — populated from the mart on tab activation. Default
+    # value defers to the populating callback so the layout stays static.
+    # Maturity chip warns when the chosen month is partial / unknown.
+    month_picker = html.Div([
+        html.Label("Analyze month:", htmlFor="ai-month-select",
+                   style={"fontSize": "12.5px", "color": "#5a6573",
+                          "marginRight": "8px"}),
+        dcc.Dropdown(
+            id="ai-month-select",
+            options=[],         # filled by populate-options callback on tab activation
+            value=None,         # filled to latest available month by same callback
+            clearable=False,
+            style={"width": "160px"},
+        ),
+        html.Span(id="ai-month-maturity", style={"marginLeft": "10px"}),
+    ], style={"display": "flex", "alignItems": "center", "marginBottom": "6px"})
+
     controls = html.Div([
+        month_picker,
         html.Div([
             dbc.Button("Generate report", id="ai-generate-btn",
                        color="primary", className="me-2"),

@@ -126,6 +126,28 @@
   }
   .mover-tags .tag-material { background: #e6f4ea; color: #137333; border-color: #b7dfc4; }
   .mover-tags .tag-noise    { background: #f3f4f6; color: #7c8693; border-color: #d9dde3; }
+  /* Audit-pass findings: a second LLM read of the writer's output flags
+     unit bugs, missing caveats, hallucinated numbers etc. Findings appear
+     under each section's <h2> as a colored banner — error/warning/info. */
+  .audit-banner {
+    padding: 10px 14px; border-radius: 4px; margin: 8px 0;
+    font-size: 12.5px; line-height: 1.5; border-left: 4px solid;
+  }
+  .audit-banner .audit-label {
+    display: inline-block; font-weight: 600; font-size: 10.5px;
+    letter-spacing: 0.6px; text-transform: uppercase; margin-right: 8px;
+  }
+  .audit-banner .audit-slot {
+    display: inline-block; font-family: 'Courier New', monospace;
+    background: rgba(0,0,0,0.06); padding: 1px 6px; border-radius: 3px;
+    margin-left: 6px; font-size: 11.5px;
+  }
+  .audit-banner .audit-suggestion {
+    margin-top: 4px; font-style: italic; opacity: 0.85;
+  }
+  .audit-error   { background: #fef1f1; color: #9e2a2a; border-color: #b3434a; }
+  .audit-warning { background: #fff8e1; color: #8a6d3b; border-color: #d4a13a; }
+  .audit-info    { background: #f0f6fc; color: #3a5a7a; border-color: #4a7bb7; }
   .chart-wrap { margin-top: 12px; }
   .chart-wrap img {
     max-width: 100%; height: auto;
@@ -179,6 +201,21 @@
     {% for m in slot.noise_flags %}<span class="tag tag-noise">{{ m }}</span>{% endfor %}
   </div>
   {% endif %}
+{% endmacro %}
+
+{# Audit findings for a top-level section letter (A, B, C, ...).
+   Rendered above the section_summary so QA defects are visible BEFORE
+   the reader internalizes whatever the author wrote. Each issue is one
+   colored banner — error / warning / info. #}
+{% macro audit_banner(section_letter) %}
+  {% set issues = pkg.audit_findings.get(section_letter, []) if pkg.audit_findings else [] %}
+  {% for issue in issues %}
+    <div class="audit-banner audit-{{ issue.severity }}">
+      <span class="audit-label">Audit · {{ issue.severity }}</span>{{ issue.issue }}
+      {% if issue.affected_slot %}<span class="audit-slot">{{ issue.affected_slot }}</span>{% endif %}
+      {% if issue.suggestion %}<div class="audit-suggestion">Suggested fix: {{ issue.suggestion }}</div>{% endif %}
+    </div>
+  {% endfor %}
 {% endmacro %}
 
 {# Section-level summary block — renders right after the <h2>. Empty when
@@ -243,6 +280,7 @@
        | list | first %}
   <section>
     <h2>A. Headline KPIs &amp; overall trend</h2>
+    {{ audit_banner('A') }}
     {{ section_summary('section_a_summary') }}
     {% if overall_latest %}
     <div class="kpi-grid">
@@ -302,6 +340,7 @@
 {# ============================== B. Slice analyses by dimension ============================== #}
   <section>
     <h2>B. Slice analyses — mix &amp; overall NRR by dimension</h2>
+    {{ audit_banner('B') }}
     {{ section_summary('section_b_summary') }}
     <p style="color: var(--muted); font-size: 12.5px;">
       Stacked bars = volume by each value of the dimension (showing population
@@ -340,6 +379,7 @@
 {# ============================== C. Big Mac drill-down ============================== #}
   <section>
     <h2>C. Big Mac cohort drill-down</h2>
+    {{ audit_banner('C') }}
     {{ section_summary('section_c_summary') }}
     {% if pkg.big_mac.cohort_empty %}
       <p class="na">Big Mac cohort had no rows after applying the configured filter.
@@ -382,6 +422,7 @@
 {# ============================== D. Top combination movers ============================== #}
   <section>
     <h2>D. Top combination movers</h2>
+    {{ audit_banner('D') }}
     {{ section_summary('section_d_summary') }}
     {% if pkg.combinations.prior_month is none %}
       <div class="placeholder">
@@ -445,6 +486,7 @@
 {# ============================== E. Model catch ============================== #}
   <section>
     <h2>E. Can the model catch the change?</h2>
+    {{ audit_banner('E') }}
     {{ section_summary('section_e_summary') }}
     <p style="color: var(--muted); font-size: 12.5px;">
       For each top NRR mover above, did the expected_rr move with it? A model
@@ -495,6 +537,7 @@
 {# ============================== F. TRM vs XPM ============================== #}
   <section>
     <h2>F. TRM vs XPM — model choice</h2>
+    {{ audit_banner('F') }}
     {{ section_summary('section_f_summary') }}
     <h3>A/E calibration trend</h3>
     {{ chart('calibration') }}

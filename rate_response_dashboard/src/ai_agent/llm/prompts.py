@@ -97,20 +97,25 @@ EXAMPLES = {
     },
     "section_b_summary": {
         "slot_id": "section_b_summary",
-        "headline": "$95/$95 share (+4.5 pp) is the dominant mix shift; vs_band 530-549 the rate-relevant one.",
+        "headline": "annual_fee dominates the mix story; rm_flag and scorecard dims are noise.",
         "body": (
-            "The single most material mix mover is $95/$95 share (+4.5 pp). "
-            "vs_band 530-549 (-4.3 pp) is the next material because that "
-            "segment also has an outsized NRR move alongside the share "
-            "drop — a rate story sitting on top of a mix story. "
-            "times_mailed 9 (-3.6 pp) is closer to noise: its per-segment "
-            "NRR did not move materially MoM."
+            "Synthesizing the per-dim findings: annual_fee is the dominant "
+            "dim — $95/$95 leads with +4.5 pp share AND a paired +8 bps "
+            "NRR. vs_band is second-ranked with one material mover (530-549, "
+            "-4.3 pp share with a rate move). times_mailed shows a share "
+            "shift but its per-dim noise_flags dominate — flat per-segment "
+            "NRR means it is a population effect, not a rate signal. "
+            "rm_flag and scorecard dims contributed no material movers."
         ),
         "material_movers": [
-            "$95/$95 share +4.5 pp",
-            "vs_band 530-549 share -4.3 pp paired with NRR move",
+            "annual_fee dim: $95/$95 mix + rate",
+            "vs_band dim: 530-549 mix + rate",
         ],
-        "noise_flags": ["times_mailed 9 share move with flat per-segment NRR"],
+        "noise_flags": [
+            "times_mailed dim: share moved but per-segment NRR did not",
+            "rm_flag dim: no material movers",
+            "scorecard dim: no material movers",
+        ],
     },
     "slice_dim": {     # template for any per-dim slice
         "slot_id": "slice_annual_fee",
@@ -304,7 +309,7 @@ def _format_user_prompt(payload: dict, example_slot_ids: list[str]) -> str:
 # ============================================================================
 
 
-def section_a(pkg: ReportPackage) -> tuple[str, str, list[str]]:
+def section_a(pkg: ReportPackage, prior_slots: dict | None = None) -> tuple[str, str, list[str]]:
     latest_kpi = next(
         (r for r in pkg.facts.overall_trend if r.campaign_month == pkg.facts.latest_month),
         None,
@@ -326,13 +331,38 @@ def section_a(pkg: ReportPackage) -> tuple[str, str, list[str]]:
             payload["slots_to_populate"])
 
 
-def section_b_summary(pkg: ReportPackage) -> tuple[str, str, list[str]]:
-    """Cross-dim summary only — per-dim charts get their own calls below."""
+def section_b_summary(pkg: ReportPackage, prior_slots: dict | None = None) -> tuple[str, str, list[str]]:
+    """Cross-dim summary. Runs AFTER per-dim builders so the prompt can
+    feed in each dim's headline + materiality call, letting the model
+    synthesize across dims rather than re-deriving rankings from raw mix
+    shifts."""
+    # Pull each per-dim slice_{dim} slot the writer already produced so the
+    # synthesis step can lean on (and cross-check) the per-dim conclusions.
+    per_dim_findings: dict = {}
+    if prior_slots:
+        for dim in pkg.slice_trends.by_dim.keys():
+            slot_id = f"slice_{dim}"
+            slot = prior_slots.get(slot_id)
+            if slot is None:
+                continue
+            per_dim_findings[dim] = {
+                "headline": slot.headline,
+                "material_movers": list(getattr(slot, "material_movers", []) or []),
+                "noise_flags": list(getattr(slot, "noise_flags", []) or []),
+            }
     payload = {
         "section_id": "B-summary",
         "topic": "Cross-dimensional mix-shift summary",
         "latest_month": pkg.facts.latest_month,
         "mix_top_shifts": [asdict(s) for s in pkg.mix.top_shifts[:10]],
+        "per_dim_findings": per_dim_findings,
+        "instruction": (
+            "Use per_dim_findings to synthesize across dims. Lead with the "
+            "single most material dim. Demote any dim whose per-dim "
+            "noise_flags dominate its material_movers — that means the dim "
+            "moved but the rate did not follow. Do not just list the mix "
+            "shifts; the per-dim charts below already do that."
+        ),
         "slots_to_populate": ["section_b_summary"],
     }
     return (_BASE_SYSTEM,
@@ -340,12 +370,12 @@ def section_b_summary(pkg: ReportPackage) -> tuple[str, str, list[str]]:
             payload["slots_to_populate"])
 
 
-def make_section_b_dim(dim: str) -> Callable[[ReportPackage], tuple[str, str, list[str]]]:
+def make_section_b_dim(dim: str) -> Callable[..., tuple[str, str, list[str]]]:
     """Return a builder for one slice dimension. Each builder produces one
     small LLM call covering ONLY that dim's trend + mix shifts."""
     slot_id = f"slice_{dim}"
 
-    def _builder(pkg: ReportPackage) -> tuple[str, str, list[str]]:
+    def _builder(pkg: ReportPackage, prior_slots: dict | None = None) -> tuple[str, str, list[str]]:
         rows = pkg.slice_trends.by_dim.get(dim, [])
         keep_months = set(pkg.facts.months_in_scope[-3:])    # trim to 3 months
         rows_recent = [r for r in rows if r.campaign_month in keep_months]
@@ -366,7 +396,7 @@ def make_section_b_dim(dim: str) -> Callable[[ReportPackage], tuple[str, str, li
     return _builder
 
 
-def section_c(pkg: ReportPackage) -> tuple[str, str, list[str]]:
+def section_c(pkg: ReportPackage, prior_slots: dict | None = None) -> tuple[str, str, list[str]]:
     slot_ids = ["section_c_summary", "big_mac_overall", "big_mac_drill"]
     payload = {
         "section_id": "C",
@@ -389,7 +419,7 @@ def section_c(pkg: ReportPackage) -> tuple[str, str, list[str]]:
             slot_ids)
 
 
-def section_d(pkg: ReportPackage) -> tuple[str, str, list[str]]:
+def section_d(pkg: ReportPackage, prior_slots: dict | None = None) -> tuple[str, str, list[str]]:
     slot_ids = ["section_d_summary", "top_combo_movers"]
     payload = {
         "section_id": "D",
@@ -407,7 +437,7 @@ def section_d(pkg: ReportPackage) -> tuple[str, str, list[str]]:
             slot_ids)
 
 
-def section_e(pkg: ReportPackage) -> tuple[str, str, list[str]]:
+def section_e(pkg: ReportPackage, prior_slots: dict | None = None) -> tuple[str, str, list[str]]:
     slot_ids = ["section_e_summary"]
     payload = {
         "section_id": "E",
@@ -423,7 +453,7 @@ def section_e(pkg: ReportPackage) -> tuple[str, str, list[str]]:
             slot_ids)
 
 
-def section_f(pkg: ReportPackage) -> tuple[str, str, list[str]]:
+def section_f(pkg: ReportPackage, prior_slots: dict | None = None) -> tuple[str, str, list[str]]:
     slot_ids = ["section_f_summary", "calibration"]
     payload = {
         "section_id": "F",
@@ -455,14 +485,17 @@ def get_section_builders(pkg: ReportPackage) -> list[tuple[str, Callable]]:
 
     Per-dim builders for Section B are generated on the fly so adding/removing
     a slice dim in config.yaml doesn't require touching this module.
+
+    Dispatch order matters: per-dim B-{dim} builders run BEFORE B-summary so
+    the summary call can see each dim's headline + materiality call via
+    `prior_slots` and synthesize across dims rather than re-deriving the
+    ranking from raw mix shifts.
     """
-    builders: list[tuple[str, Callable]] = [
-        ("A", section_a),
-        ("B-summary", section_b_summary),
-    ]
+    builders: list[tuple[str, Callable]] = [("A", section_a)]
     for dim in pkg.slice_trends.by_dim.keys():
         builders.append((f"B-{dim}", make_section_b_dim(dim)))
     builders.extend([
+        ("B-summary", section_b_summary),
         ("C", section_c),
         ("D", section_d),
         ("E", section_e),

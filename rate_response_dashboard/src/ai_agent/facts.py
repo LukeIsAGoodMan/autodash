@@ -318,3 +318,9 @@ class ReportPackage:
     # section summary id like 'section_a_summary'). Empty dict = Stage 1
     # mode (no LLM); template falls back to the "Commentary pending" stub.
     commentary: dict = field(default_factory=dict)
+    # Audit pass findings, keyed by section letter ('A', 'B', 'C', ...).
+    # Each entry is a list of AuditIssue (from llm.auditor). Empty when
+    # the audit step is disabled or no issues found. Schema kept loose
+    # (dict, not Pydantic) so this dataclass doesn't pull in LLM-layer
+    # types — the renderer reads issue fields by attribute access.
+    audit_findings: dict = field(default_factory=dict)
