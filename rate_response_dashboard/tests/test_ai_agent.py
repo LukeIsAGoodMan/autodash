@@ -755,6 +755,129 @@ def test_auditor_failure_records_info_issue():
             assert "could not complete" in iss.issue or "crashed" in iss.issue
 
 
+def test_audit_global_compresses_payload_and_returns_issues():
+    """Tier-2 auditor must (a) skip slot bodies (just headlines + chips
+    go into payload), (b) include per-section findings, and (c) return
+    AuditIssue objects ready for rendering."""
+    from src.ai_agent.llm.auditor import audit_global, AuditIssue, GlobalAuditReport
+    from src.ai_agent.llm.schemas import CommentarySlot
+    pkg = _pkg_for_llm_tests()
+    # Two slots: one normal, one a fallback that should be excluded.
+    commentary = {
+        "section_a_summary": CommentarySlot(
+            slot_id="section_a_summary",
+            headline="Latest NRR closed at 1.37%, +25 bps MoM.",
+            body="LONG_BODY_SENTINEL " * 20,        # ~400 chars, under 1200 max
+            material_movers=["NRR +25 bps"],
+        ),
+        "calibration": CommentarySlot(
+            slot_id="calibration",
+            headline="Commentary unavailable — api key missing",
+            body="fallback body content placeholder for the test",
+        ),
+    }
+    section_findings = {
+        "A": [AuditIssue(severity="warning",
+                         issue="material movers list could be richer",
+                         affected_slot="section_a_summary")],
+    }
+
+    captured_user_prompts: list[str] = []
+
+    class FakeGlobalClient:
+        def generate_structured(self, *, system, user, schema):
+            captured_user_prompts.append(user)
+            # Verify the payload shape we expect.
+            assert "headline_facts" in user
+            assert "section_outputs" in user
+            assert "section_local_audit_findings" in user
+            # Body content must NOT have been shipped — we compressed.
+            assert "LONG_BODY_SENTINEL" not in user
+            # Fallback slot must be excluded.
+            assert "Commentary unavailable" not in user
+            return GlobalAuditReport(issues=[
+                AuditIssue(severity="error",
+                           issue="A says NRR +25 bps but D's top combo movers do not corroborate",
+                           affected_slot="section_a_summary, top_combo_movers",
+                           suggestion="cross-check the MoM anchor"),
+                AuditIssue(severity="warning",
+                           issue="narrative gap: A and F describe different stories",
+                           affected_slot="",
+                           suggestion=""),
+            ])
+
+    issues = audit_global(pkg, commentary, section_findings, FakeGlobalClient())
+    assert len(captured_user_prompts) == 1, "global audit must make exactly one call"
+    assert len(issues) == 2
+    assert issues[0].severity == "error"
+    assert "NRR +25 bps" in issues[0].issue
+
+
+def test_audit_global_caps_at_six_findings():
+    """Defensive cap so a runaway model can't bury the analyst in noise."""
+    from src.ai_agent.llm.auditor import audit_global, AuditIssue, GlobalAuditReport
+    from src.ai_agent.llm.schemas import CommentarySlot
+    pkg = _pkg_for_llm_tests()
+    commentary = {"section_a_summary": CommentarySlot(
+        slot_id="section_a_summary",
+        headline="Headline real for review by global auditor.",
+        body="Body content here for the auditor to review safely.",
+    )}
+
+    class ChattyClient:
+        def generate_structured(self, *, system, user, schema):
+            return GlobalAuditReport(issues=[
+                AuditIssue(severity="info",
+                           issue=f"finding number {i} from a chatty model that ignores the cap",
+                           affected_slot="", suggestion="")
+                for i in range(12)
+            ])
+
+    issues = audit_global(pkg, commentary, {}, ChattyClient())
+    assert len(issues) == 6, f"expected cap=6, got {len(issues)}"
+
+
+def test_audit_global_handles_failure_with_info_issue():
+    """When the global call itself fails, return a single info issue so the
+    report still renders WITHOUT silently dropping the audit signal."""
+    from src.ai_agent.llm.auditor import audit_global
+    from src.ai_agent.llm.client import LLMError
+    from src.ai_agent.llm.schemas import CommentarySlot
+    pkg = _pkg_for_llm_tests()
+    commentary = {"section_a_summary": CommentarySlot(
+        slot_id="section_a_summary",
+        headline="Headline real for review by global auditor.",
+        body="Body content here for the auditor to review safely.",
+    )}
+
+    class FailClient:
+        def generate_structured(self, *, system, user, schema):
+            raise LLMError("simulated global audit network failure")
+
+    issues = audit_global(pkg, commentary, {}, FailClient())
+    assert len(issues) == 1 and issues[0].severity == "info"
+    assert "could not complete" in issues[0].issue
+
+
+def test_audit_global_skips_when_no_real_commentary():
+    """If every slot is itself a fallback, there's nothing for the global
+    auditor to reason about — return empty list, no LLM call."""
+    from src.ai_agent.llm.auditor import audit_global
+    from src.ai_agent.llm.writer import _fallback_slot
+    pkg = _pkg_for_llm_tests()
+    commentary = {sid: _fallback_slot(sid, "api missing")
+                  for sid in ["section_a_summary", "overall_combo"]}
+
+    called: list[bool] = []
+    class TrackingClient:
+        def generate_structured(self, **_):
+            called.append(True)
+            raise AssertionError("global audit should NOT call when nothing reviewable")
+
+    issues = audit_global(pkg, commentary, {}, TrackingClient())
+    assert issues == [] and called == []
+
+
 def test_orchestrator_skips_audit_when_disabled(monkeypatch, tmp_path):
     """ai_agent.llm.audit_enabled: false must skip the audit step entirely
     — verified by checking that audit_findings stays empty even when LLM

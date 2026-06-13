@@ -148,6 +148,17 @@
   .audit-error   { background: #fef1f1; color: #9e2a2a; border-color: #b3434a; }
   .audit-warning { background: #fff8e1; color: #8a6d3b; border-color: #d4a13a; }
   .audit-info    { background: #f0f6fc; color: #3a5a7a; border-color: #4a7bb7; }
+  /* Report-level audit findings stand out from section banners: thicker
+     border, slightly larger text, sit at the top of the report. */
+  .global-audit-block {
+    border: 1px solid #cdd5dd; border-radius: 6px;
+    padding: 12px 16px; margin: 10px 0 18px 0; background: #fbfcfd;
+  }
+  .global-audit-block .global-audit-label {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.8px;
+    text-transform: uppercase; color: #5a6573; margin-bottom: 8px;
+  }
+  .global-audit-block .audit-banner { font-size: 13px; }
   .chart-wrap { margin-top: 12px; }
   .chart-wrap img {
     max-width: 100%; height: auto;
@@ -203,6 +214,27 @@
   {% endif %}
 {% endmacro %}
 
+{# Report-level audit banner — the final QA pass that reduces over every
+   section. Catches cross-section number conflicts, narrative gaps, and
+   severity miscalibration (e.g. 4 sections all flagging the same root
+   cause). Rendered at the TOP of the report, above all section banners,
+   because cross-section issues outrank within-section ones. #}
+{% macro global_audit_banner() %}
+  {% set issues = pkg.global_audit if pkg.global_audit else [] %}
+  {% if issues %}
+    <div class="global-audit-block">
+      <div class="global-audit-label">Report-level audit · {{ issues | length }} finding(s) across sections</div>
+      {% for issue in issues %}
+        <div class="audit-banner audit-{{ issue.severity }}">
+          <span class="audit-label">{{ issue.severity }}</span>{{ issue.issue }}
+          {% if issue.affected_slot %}<span class="audit-slot">{{ issue.affected_slot }}</span>{% endif %}
+          {% if issue.suggestion %}<div class="audit-suggestion">Suggested fix: {{ issue.suggestion }}</div>{% endif %}
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endmacro %}
+
 {# Audit findings for a top-level section letter (A, B, C, ...).
    Rendered above the section_summary so QA defects are visible BEFORE
    the reader internalizes whatever the author wrote. Each issue is one
@@ -242,6 +274,9 @@
     </div>
     <span class="watermark">AI-generated draft &middot; analyst review required</span>
   </header>
+
+{# Global audit (cross-section): top of report, above all section content. #}
+  {{ global_audit_banner() }}
 
 {# ============================== Data quality ============================== #}
   {% set latest_mat = pkg.facts.maturity.get(pkg.facts.latest_month) %}

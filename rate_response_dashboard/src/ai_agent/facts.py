@@ -324,3 +324,8 @@ class ReportPackage:
     # (dict, not Pydantic) so this dataclass doesn't pull in LLM-layer
     # types — the renderer reads issue fields by attribute access.
     audit_findings: dict = field(default_factory=dict)
+    # Report-level audit: catches issues only visible across sections
+    # (number conflicts between A and F, narrative gaps between B and D,
+    # severity miscalibration). Rendered as a banner at the top of the
+    # report. Same AuditIssue shape — flat list, no section keying.
+    global_audit: list = field(default_factory=list)

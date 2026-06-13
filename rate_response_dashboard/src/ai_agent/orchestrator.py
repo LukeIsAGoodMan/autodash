@@ -103,6 +103,13 @@ def build_report_package(cfg: dict, target_month: str | None = None) -> ReportPa
                 pkg.audit_findings = llm_auditor.audit_commentary(
                     pkg, pkg.commentary, client,
                 )
+                # Tier-2 reducer — needs per-section findings as input, so
+                # only runs when audit_enabled is on. Adds ~1 LLM call per
+                # report (compressed payload, ~5-10K input tokens).
+                if llm_cfg.get("global_audit_enabled", True):
+                    pkg.global_audit = llm_auditor.audit_global(
+                        pkg, pkg.commentary, pkg.audit_findings, client,
+                    )
 
     return pkg
 

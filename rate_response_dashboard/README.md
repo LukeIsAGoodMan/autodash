@@ -203,7 +203,8 @@ ai_agent:
     api_key_env: OPENAI_API_KEY
     timeout_seconds: 30
     enabled: false          # flip to true when ready; defaults off
-    audit_enabled: true     # Sprint B audit pass; set false to save spend
+    audit_enabled: true     # Sprint B per-section audit; false to save spend
+    global_audit_enabled: true  # tier-2 cross-section auditor (1 extra call)
   chart_lookback_months: 15
   slice_dims: [annual_fee, vs_band, scorecard, Prospect_type, rm_flag, times_mailed_12mo_cnt]
   big_mac:
@@ -460,6 +461,17 @@ pytest tests/
     banners under the section H2 (red = error, amber = warning, blue =
     info). Audit failure itself becomes an info banner so the report
     never breaks. Disable via `ai_agent.llm.audit_enabled: false`.
+  - **Tier-2 global audit** (`audit_global`): one final LLM call after
+    all per-section audits, reduces over the compressed view of every
+    slot's headline + materiality chips + per-section findings + the
+    top-level facts. Catches what no local auditor can see — cross-
+    section number conflicts, narrative gaps, and severity
+    miscalibration when multiple sections trace to the same root cause.
+    Payload deliberately strips slot bodies, fitting in ~5-10K tokens.
+    Findings render as a stacked banner at the very TOP of the report
+    (above all section banners). Capped at 6 findings to protect the
+    analyst's attention budget. Disable independently via
+    `ai_agent.llm.global_audit_enabled: false`.
 - ⬜ **Stage 3 — PAF integration** *(2–3 weeks)*
   - LLM-based PDF extraction agent reads the analyst-maintained PAF
     documents and emits structured `PAFEvent` records (event type, affected

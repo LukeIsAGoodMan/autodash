@@ -1,23 +1,27 @@
 """Independent audit pass over LLM-generated commentary.
 
-The writer (`llm/writer.py`) is the *author*. This module is the *reviewer*:
-same LLM endpoint (so it works on Gemini Enterprise without provisioning a
-second vendor), fresh system prompt that frames the model as a skeptical
-QA reader who did NOT write the commentary.
+Two tiers, both running on the same LLM endpoint:
 
-Each section is audited independently using the same facts payload the
-original author saw, plus the slots the author actually wrote. Findings
-are keyed by **section letter** ('A', 'B', 'C', 'D', 'E', 'F') so the
-template can show one banner per top-level section regardless of how many
-sub-builders (A, B-{dim}, B-summary, ...) contributed.
+1. `audit_commentary` — one call per section. Catches WITHIN-section
+   defects: bps/pp unit bugs, hallucinated numbers, missing caveats,
+   causal language, internal contradictions, weak prioritization.
 
-Never raises — a failed audit call falls back to "audit unavailable" info
-issue so the report still renders.
+2. `audit_global` — one final call that reduces over per-section
+   findings + slot headlines + a compressed view of top-level facts.
+   Catches CROSS-section defects that no local auditor can see:
+   numbers cited inconsistently between sections, narrative gaps where
+   sections don't connect, and severity miscalibration when multiple
+   per-section findings trace to the same root cause.
+
+Each tier is gated by its own config flag (`audit_enabled` and
+`global_audit_enabled`), defaults true. Neither tier ever raises — a
+failed call becomes an `info` issue that the report still renders.
 """
 from __future__ import annotations
 
 import json
 import logging
+from dataclasses import asdict
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -202,3 +206,169 @@ def audit_commentary(
             findings.setdefault(letter, []).extend(report.issues)
 
     return findings
+
+
+# ============================================================================
+# Global audit — final pass over the whole report
+# ============================================================================
+
+
+_GLOBAL_AUDIT_SYSTEM = (
+    "You are the FINAL QA reviewer for a monthly direct-mail performance "
+    "report. The per-section auditors have already flagged within-section "
+    "defects. Your job is the layer above them: catch problems that only "
+    "appear when looking at the WHOLE report.\n"
+    "\n"
+    "Check for exactly three categories:\n"
+    "\n"
+    "1. CROSS-SECTION NUMBER CONFLICTS. The same metric cited in two "
+    "different slots must agree. If Section A's headline says NRR +25 bps "
+    "MoM but Section F's calibration prose says NRR was flat, flag it. "
+    "Cite BOTH slot ids and BOTH conflicting numbers in the issue text.\n"
+    "\n"
+    "2. NARRATIVE GAPS. Each section tells a local story; the report "
+    "should tell a coherent one. If Section B identifies $95/$95 as the "
+    "dominant mix driver but Section D's top combo movers never mention "
+    "any $95/$95 cells, that is a gap — either the mix story is wrong or "
+    "D missed a connection. If sections read disconnected — each making "
+    "its own point with no shared theme — flag it as a narrative-gap "
+    "warning.\n"
+    "\n"
+    "3. SEVERITY CALIBRATION across per-section findings. The per-section "
+    "auditors made local calls. If several sections all flag the same "
+    "root cause (e.g., 4 sections all report unit bugs that trace to one "
+    "stale MoM input), say so explicitly so the analyst fixes the root "
+    "once rather than the symptom 4 times. If a per-section finding "
+    "is rated 'error' but is really stylistic when read alongside the "
+    "rest of the report, note it as info.\n"
+    "\n"
+    "Severity guidance for YOUR findings:\n"
+    "  • error   = cross-section number conflict, broken narrative thread\n"
+    "  • warning = weaker disconnects, redundancy across sections, "
+    "miscalibrated per-section severity\n"
+    "  • info    = stylistic / observational; the report still ships\n"
+    "\n"
+    "Output rules:\n"
+    "  - Be specific. Cite slot ids and the conflicting numbers / phrases, "
+    "not vibes.\n"
+    "  - Empty list is a valid AND PREFERRED answer if the report holds "
+    "together. DO NOT manufacture findings.\n"
+    "  - Cap total issues at 6. If you find more than 6, return the "
+    "6 highest-priority ones — the analyst's attention budget is finite."
+)
+
+
+class GlobalAuditReport(BaseModel):
+    """Report-level audit output. Same issue shape as section audit."""
+    issues: list[AuditIssue] = Field(default_factory=list)
+
+
+def _compress_slot(slot: CommentarySlot) -> dict:
+    """Drop the full body — global auditor only needs headline + chips
+    to assess narrative coherence. Cuts payload by ~10x."""
+    return {
+        "slot_id": slot.slot_id,
+        "headline": slot.headline,
+        "material_movers": list(getattr(slot, "material_movers", []) or []),
+        "noise_flags": list(getattr(slot, "noise_flags", []) or []),
+    }
+
+
+def _headline_facts(pkg: ReportPackage) -> dict:
+    """The smallest fact view sufficient for cross-section reasoning.
+
+    Deliberately *not* every fact — global auditor reasons over the
+    commentary, not the raw data. We just need enough to verify that
+    the commentary's claims have a plausible root in the facts.
+    """
+    mm = pkg.mom_yoy
+    return {
+        "report_month": pkg.facts.latest_month,
+        "overall_mom": [asdict(m) for m in (mm.overall_mom or [])][:4],
+        "overall_yoy": [asdict(m) for m in (mm.overall_yoy or [])][:4],
+        "top_mix_shifts": [asdict(s) for s in (pkg.mix.top_shifts or [])][:5],
+        "big_mac_summary": {
+            "cohort_empty": pkg.big_mac.cohort_empty,
+            "biggest_gain": asdict(pkg.big_mac.biggest_gain) if pkg.big_mac.biggest_gain else None,
+            "biggest_drop": asdict(pkg.big_mac.biggest_drop) if pkg.big_mac.biggest_drop else None,
+        },
+        "top_combo_gainers": [asdict(c) for c in (pkg.combinations.top_gainers or [])][:3],
+        "top_combo_losers":  [asdict(c) for c in (pkg.combinations.top_losers or [])][:3],
+        "model_catch_summary": {
+            "trm": pkg.model_catch.trm_summary,
+            "xpm": pkg.model_catch.xpm_summary,
+        },
+    }
+
+
+def audit_global(
+    pkg: ReportPackage,
+    commentary: dict[str, CommentarySlot],
+    section_findings: dict[str, list[AuditIssue]],
+    client: LLMClient,
+) -> list[AuditIssue]:
+    """Run ONE LLM call that reduces over the whole report.
+
+    Input is intentionally compressed (~5-10K tokens) so the auditor's
+    attention stays sharp:
+      - headline + chips for every populated slot (no bodies)
+      - per-section audit findings (already short)
+      - a top-N fact summary (overall mom/yoy, top mix shifts, top combo
+        movers, model-catch counts) — just enough to cross-check claims
+
+    Never raises — failure becomes a single info issue.
+    """
+    # Skip slots that are themselves fallbacks; their content is the
+    # audit verdict, no point feeding them to the auditor.
+    slot_view = [
+        _compress_slot(slot)
+        for slot in commentary.values()
+        if not slot.headline.lower().startswith("commentary unavailable")
+    ]
+    if not slot_view:
+        return []
+
+    # Per-section findings → JSON-safe; downgrade Pydantic models to dicts.
+    findings_view = {
+        letter: [iss.model_dump(mode="json") for iss in issues]
+        for letter, issues in section_findings.items()
+    }
+
+    payload = {
+        "instruction": (
+            "Audit the whole report. Look for cross-section number "
+            "conflicts, narrative gaps, and severity miscalibration. "
+            "Return only specific, citation-backed findings."
+        ),
+        "headline_facts": _headline_facts(pkg),
+        "section_outputs": slot_view,
+        "section_local_audit_findings": findings_view,
+    }
+    user = (
+        "Below is a compressed view of the whole report. Audit it.\n\n"
+        f"{json.dumps(payload, indent=2, default=str)}"
+    )
+
+    try:
+        report = client.generate_structured(
+            system=_GLOBAL_AUDIT_SYSTEM, user=user, schema=GlobalAuditReport,
+        )
+    except LLMError as e:
+        log.warning("Global audit failed: %s", e)
+        return [AuditIssue(
+            severity="info",
+            issue=f"Report-level audit pass could not complete: {str(e)[:200]}",
+            affected_slot="",
+            suggestion="",
+        )]
+    except Exception as e:
+        log.exception("Global audit unexpected error: %s", e)
+        return [AuditIssue(
+            severity="info",
+            issue=f"Report-level audit pass crashed: {type(e).__name__}",
+            affected_slot="",
+            suggestion="",
+        )]
+
+    # Cap at 6 per the prompt rule — defensive in case the model ignores.
+    return list(report.issues)[:6]
